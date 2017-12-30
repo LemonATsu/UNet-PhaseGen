@@ -7,8 +7,8 @@ from cycleGAN import CycleGAN
 from collections import OrderedDict
 
 parser = argparse.ArgumentParser(description="Training parameters")
-parser.add_argument("--dataset", default="unvoiced/Jazz_val.npy,unvoiced/Pop_val.npy", type=str, help="comma-separated dataset paths")
-#parser.add_argument("--dataset", default="unvoiced/Jazz_train.npy,unvoiced/Pop_train.npy", type=str, help="comma-separated dataset paths")
+#parser.add_argument("--dataset", default="unvoiced/Jazz_val.npy,unvoiced/Pop_val.npy", type=str, help="comma-separated dataset paths")
+parser.add_argument("--dataset", default="unvoiced/Jazz_train.npy,unvoiced/Pop_train.npy", type=str, help="comma-separated dataset paths")
 #parser.add_argument("--dataset", default="unvoiced/dummyA.npy,unvoiced/dummyB.npy", type=str, help="comma-separated dataset paths")
 parser.add_argument("--output-dir", default="model_weight", type=str, help="dir for outputting log/model")
 parser.add_argument("--lr", default=0.0002, type=float, help="init learning rate")
