@@ -50,6 +50,10 @@ class CycleGAN(object):
             # fake pool
             self.fplA = Pool(self.pool_size)
             self.fplB = Pool(self.pool_size)
+            # real pool
+            self.rplA = Pool(self.pool_size)
+            self.rplB = Pool(self.pool_size)
+
             self.GAN_loss = GANLoss(tensor=self.tensor)
             self.cycle_loss = torch.nn.L1Loss()
             self.identity_loss = torch.nn.L1Loss() # if the input is from its target domain, it should output an identity one.
@@ -98,14 +102,10 @@ class CycleGAN(object):
         self.input_A.copy_(inputs["A"])
         self.input_B.copy_(inputs["B"])
 
-    def optimize(self):
-        self.optim_G.zero_grad()
-        self.optim_D_A.zero_grad()
-        self.optim_D_B.zero_grad()
-
+    def optimize(self, n_D=1):
         self.forward()
         self.backward_G()
-        self.backward_D()
+        self.backward_D(n_D)
 
     def sched_step(self):
         for s in self.lr_scheds:
@@ -124,20 +124,44 @@ class CycleGAN(object):
         D_loss.backward()
         return D_loss
 
-    def backward_D(self, step=True):
+    def backward_D(self, n_D=1, step=True):
+        # put data into pool
         fake_A = self.fplA.draw(self.fake_A)
-        D_loss_A = self._backward_D(self.dis_A, self.real_A, fake_A)
-        if step: self.optim_D_A.step()
-
         fake_B = self.fplB.draw(self.fake_B)
-        D_loss_B = self._backward_D(self.dis_B, self.real_B, fake_B)
-        if step: self.optim_D_B.step()
+        self.rplA.draw(self.input_A.clone())
+        self.rplB.draw(self.input_B.clone())
+        real_A = self.real_A
+        real_B = self.real_B
 
-        self.D_loss_A = D_loss_A.data[0]
-        self.D_loss_B = D_loss_B.data[0]
+        D_loss_As = []
+        D_loss_Bs = []
 
+        for i in range(n_D):
+            # reset gradient
+            self.optim_D_A.zero_grad()
+            self.optim_D_B.zero_grad()
+
+            D_loss_A = self._backward_D(self.dis_A, real_A, fake_A)
+            if step: self.optim_D_A.step()
+
+            D_loss_B = self._backward_D(self.dis_B, real_B, fake_B)
+            if step: self.optim_D_B.step()
+
+            D_loss_As.append(D_loss_A.data[0])
+            D_loss_Bs.append(D_loss_B.data[0])
+
+            # resample
+            fake_A = Variable(self.fplA.get_samples(self.batch_size))
+            fake_B = Variable(self.fplB.get_samples(self.batch_size))
+            real_A = Variable(self.rplA.get_samples(self.batch_size))
+            real_B = Variable(self.rplB.get_samples(self.batch_size))
+
+        self.D_loss_A = np.mean(D_loss_As)
+        self.D_loss_B = np.mean(D_loss_Bs)
 
     def backward_G(self, step=True):
+        # reset gradient
+        self.optim_G.zero_grad()
 
         # discriminator A
         fake_A = self.gen_A(self.real_B)
