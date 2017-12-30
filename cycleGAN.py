@@ -1,10 +1,13 @@
 import torch
 import torch.nn as nn
 from torch.nn import init
+import torch.optim.lr_scheduler
 from torch.autograd import Variable
 import itertools, functools
-from utils import Pool, GANLoss, View
+from utils import Pool, GANLoss, View, EnergyLoss, AmpToDb
 from collections import OrderedDict
+import os
+import numpy as np
 
 def weights_init(m):
     classname = m.__class__.__name__
@@ -18,7 +21,7 @@ def weights_init(m):
 
 class CycleGAN(object):
 
-    def __init__(self, lr, lamb_A, lamb_B, lamb_I, output_dir, shape,
+    def __init__(self, lr, lamb_A, lamb_B, lamb_I, lamb_E, output_dir, shape,
                     batch_size, pool_size, gpu_id=None, is_training=True):
 
         self.tensor = torch.cuda.FloatTensor if gpu_id else torch.Tensor
@@ -31,6 +34,7 @@ class CycleGAN(object):
         self.lamb_A = lamb_A
         self.lamb_B = lamb_B
         self.lamb_I = lamb_I
+        self.lamb_E = lamb_E
         self.gpu_id = gpu_id
 
         self.input_A = self.tensor(batch_size, 2, self.shape[0], self.shape[1])
@@ -49,10 +53,11 @@ class CycleGAN(object):
             self.GAN_loss = GANLoss(tensor=self.tensor)
             self.cycle_loss = torch.nn.L1Loss()
             self.identity_loss = torch.nn.L1Loss() # if the input is from its target domain, it should output an identity one.
+            self.energy_loss = EnergyLoss()
 
             self.optim_G = torch.optim.Adam(
                     itertools.chain(self.gen_A.parameters(), self.gen_B.parameters()),
-                    lr=self.lr,
+                    lr=self.lr, betas=(0.5, 0.999)
                 )
             """
             self.optim_D = torch.optim.Adam(
@@ -60,9 +65,15 @@ class CycleGAN(object):
                     itertools.chain(self.dis_A.parameters(), self.dis_B.parameters()),
                 )
             """
-            self.optim_D_A = torch.optim.Adam(self.dis_A.parameters(), lr=self.lr)
-            self.optim_D_B = torch.optim.Adam(self.dis_B.parameters(), lr=self.lr)
+            self.optim_D_A = torch.optim.Adam(self.dis_A.parameters(), lr=self.lr, betas=(0.5, 0.999))
+            self.optim_D_B = torch.optim.Adam(self.dis_B.parameters(), lr=self.lr, betas=(0.5, 0.999))
             self.optims = [self.optim_G, self.optim_D_A, self.optim_D_B]
+            self.lr_scheds = []
+            for optim in self.optims:
+                epochs = np.linspace(100, 1000, 10, dtype=int)
+                self.lr_scheds.append(
+                    torch.optim.lr_scheduler.MultiStepLR(optim, epochs)
+                )
 
     def build_D(self, input_nc, n_layers, gpu_ids):
         if not(isinstance(gpu_ids ,list)):
@@ -83,7 +94,6 @@ class CycleGAN(object):
         G.apply(weights_init)
         return G
 
-
     def set_input(self, inputs):
         self.input_A.copy_(inputs["A"])
         self.input_B.copy_(inputs["B"])
@@ -97,6 +107,10 @@ class CycleGAN(object):
         self.backward_G()
         self.backward_D()
 
+    def sched_step(self):
+        for s in self.lr_scheds:
+            s.step()
+
     def forward(self):
         self.real_A = Variable(self.input_A)
         self.real_B = Variable(self.input_B)
@@ -104,7 +118,7 @@ class CycleGAN(object):
     def _backward_D(self, dis, real, fake):
         pred_real = dis(real)
         D_loss_real = self.GAN_loss(pred_real, True)
-        pred_fake = dis(fake)
+        pred_fake = dis(fake.detach())
         D_loss_fake = self.GAN_loss(pred_fake, False)
         D_loss = (D_loss_real + D_loss_fake) * 0.5
         D_loss.backward()
@@ -139,13 +153,16 @@ class CycleGAN(object):
         # cycle loss
         # caculate real/imaginary part respectively
         rec_A = self.gen_A(fake_B)
-        cyc_r_loss_A = self.cycle_loss(rec_A[:, :, :, 0], self.real_A[:, :, :, 0]) * self.lamb_A
-        cyc_i_loss_A = self.cycle_loss(rec_A[:, :, :, 1], self.real_A[:, :, :, 1]) * self.lamb_A
+        cyc_r_loss_A = self.cycle_loss(rec_A[:, 0, :, :], self.real_A[:, 0, :, :]) * self.lamb_A
+        cyc_i_loss_A = self.cycle_loss(rec_A[:, 1, :, :], self.real_A[:, 1, :, :]) * self.lamb_A
 
         rec_B = self.gen_B(fake_A)
-        cyc_r_loss_B = self.cycle_loss(rec_B[:, :, :, 0], self.real_B[:, :, :, 0]) * self.lamb_B
-        cyc_i_loss_B = self.cycle_loss(rec_B[:, :, :, 1], self.real_B[:, :, :, 1]) * self.lamb_B
+        cyc_r_loss_B = self.cycle_loss(rec_B[:, 0, :, :], self.real_B[:, 0, :, :]) * self.lamb_B
+        cyc_i_loss_B = self.cycle_loss(rec_B[:, 1, :, :], self.real_B[:, 1, :, :]) * self.lamb_B
 
+        # energy loss
+        ene_A = self.energy_loss(fake_A, self.real_B) * self.lamb_E
+        ene_B = self.energy_loss(fake_B, self.real_A) * self.lamb_E
 
         # calculate identity loss
         if self.lamb_I > 0.0:
@@ -161,9 +178,10 @@ class CycleGAN(object):
         self.idt_loss_B = idt_loss_B.data[0] if self.lamb_I > 0.0 else 0.
 
         G_loss = G_loss_A + G_loss_B +  \
-                 cyc_r_loss_A + cyc_i_loss_A + \
-                 cyc_r_loss_B + cyc_i_loss_B + \
-                 idt_loss_A + idt_loss_B
+                 (cyc_r_loss_A + cyc_i_loss_A) * 0.5 + \
+                 (cyc_r_loss_B + cyc_i_loss_B) * 0.5 + \
+                 idt_loss_A + idt_loss_B + \
+                 (ene_A + ene_B) * 0.5
         G_loss.backward()
         if step: self.optim_G.step()
 
@@ -178,11 +196,14 @@ class CycleGAN(object):
         self.cyc_i_loss_A = cyc_i_loss_A.data[0]
         self.cyc_r_loss_B = cyc_r_loss_B.data[0]
         self.cyc_i_loss_B = cyc_i_loss_B.data[0]
+        self.ene_A = ene_A.data[0]
+        self.ene_B = ene_B.data[0]
 
     def report_errors(self):
         report = OrderedDict([("D_A", self.D_loss_A), ("D_B", self.D_loss_B),
                     ("Cyc_r_A", self.cyc_r_loss_A), ("Cyc_r_B", self.cyc_r_loss_B),
-                    ("Cyc_i_A", self.cyc_i_loss_A), ("Cyc_i_B", self.cyc_i_loss_B)])
+                    ("Cyc_i_A", self.cyc_i_loss_A), ("Cyc_i_B", self.cyc_i_loss_B),
+                    ("Ene_A", self.ene_A), ("Ene_B", self.ene_B)])
         if self.lamb_I > 0.0:
             report["idt_A"] = self.idt_loss_A
             report["idt_B"] = self.idt_loss_B
@@ -193,6 +214,33 @@ class CycleGAN(object):
         fake_Bs = self.fplB.get_samples(n_sample)
         return fake_As, fake_Bs
 
+    def generate(self):
+        real_A = Variable(self.input_A, volatile=True)
+        real_B = Variable(self.input_B, volatile=True)
+        fake_A = self.gen_A(real_B)
+        fake_B = self.gen_B(real_A)
+        recn_A = self.gen_A(fake_B)
+        recn_B = self.gen_B(fake_A)
+
+        return fake_A.data[0], fake_B.data[0], recn_A.data[0], recn_B.data[0]
+
+    def save(self, label):
+        self.save_network(self.gen_A, "G_A", label, self.gpu_id)
+        self.save_network(self.dis_A, "D_A", label, self.gpu_id)
+        self.save_network(self.gen_B, "G_B", label, self.gpu_id)
+        self.save_network(self.dis_B, "D_B", label, self.gpu_id)
+
+    def save_network(self, network, network_label, epoch_label, gpu_id=None):
+        save_filename = "{}_net_{}.pth".format(epoch_label, network_label)
+        save_path = os.path.join(self.output_dir, save_filename)
+        torch.save(network.cpu().state_dict(), save_path)
+        if len(gpu_id) > 0 and torch.cuda.is_available():
+            network.cuda(gpu_id[0])
+
+    def load_network(self, network, network_label, epoch_label):
+        save_filename = "{}_net_{}.pth".format(epoch_label, network_label)
+        save_path = os.path.join(self.output_dir, save_filename)
+        network.load_state_dict(torch.load(save_path))
 
 class NLayerDiscriminator(nn.Module):
     def __init__(self, input_nc, ndf=32, n_layers=3, k_size=4, stride=(2,2), padding=1, norm_layer=nn.BatchNorm2d, gpu_ids=[]):
