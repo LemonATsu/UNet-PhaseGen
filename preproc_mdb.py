@@ -60,7 +60,7 @@ def chunk_audio(audio, t_slice, n_fft, hop_length, n_random):
             results.append(stft)
     return results
 
-def compute_feature(n_fft, hop_length, genres, chunk, rsr, unvoice, n_random):
+def compute_feature(n_fft, hop_length, genres, chunk, rsr, unvoice, n_random, n_val):
     genres = genres.split(",")
     t_slice = int(chunk * rsr)
 
@@ -82,7 +82,12 @@ def compute_feature(n_fft, hop_length, genres, chunk, rsr, unvoice, n_random):
             cks.extend(chunk_audio(mix, t_slice, n_fft, hop_length, n_random))
             print("{} extracted.".format(path.split("/")[-1]))
         print("{} chunks are generated for {} in {} secs.".format(len(cks), genre, time.time()-start))
-        np.save("./output/{}.npy".format(genre), cks)
+        cks = np.array(cks)
+        val_idx = np.random.choice(cks.shape[0], n_val, replace=False)
+        cks_v = cks[val_idx]
+        cks_t = cks[cks not in val_idx]
+        np.save("./output/{}_val.npy".format(genre), cks_v)
+        np.save("./output/{}_train.npy".format(genre), cks_t)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="select the genre(s) for extracting feature")
@@ -92,6 +97,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_random", default=30, type=int, help="number of randomly generated clip for each chunk")
     parser.add_argument("--unvoice", default=True, action="store_false", help="use unvoice version of tracks")
     parser.add_argument("--rsr", default=16000, type=int, help="sample rate after being resampled")
+    parser.add_argument("--n_val", default=1000, type=int, help="sample rate after being resampled")
     parser.add_argument("--genres", required=True, type=str, help="genres: comma separate")
     args = vars(parser.parse_args())
     compute_feature(**args)

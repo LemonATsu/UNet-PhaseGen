@@ -4,7 +4,7 @@ from torch.nn import init
 import torch.optim.lr_scheduler
 from torch.autograd import Variable
 import itertools, functools
-from utils import Pool, GANLoss, View, EnergyLoss, AmpToDb
+from utils import Pool, GANLoss, View, EnergyLoss
 from collections import OrderedDict
 import os
 import numpy as np
