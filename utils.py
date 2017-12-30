@@ -21,6 +21,22 @@ class View(nn.Module):
     def forward(self, input):
         return input.view(*self.shape)
 
+class EnergyLoss(nn.Module):
+    def __init__(self, tensor=torch.FloatTensor):
+        super(EnergyLoss, self).__init__()
+        self.tensor = tensor
+        self.loss = nn.MSELoss()
+
+    def __call__(self, a, b):
+        amp_a = self._calc_amp(a)
+        amp_b = self._calc_amp(b)
+        return self.loss(amp_a, amp_b)
+
+    def _calc_amp(self, a):
+        return torch.sqrt(a[:, 0, ...]**2 + a[:, 1, ...]**2 + 1e-10)
+
+
+
 class GANLoss(nn.Module):
     def __init__(self, real_label=1., fake_label=0., tensor=torch.FloatTensor):
         super(GANLoss, self).__init__()
@@ -84,12 +100,19 @@ class Pool(object):
 
     def get_samples(self, n_sample):
         samples = []
-        for i in range(n_sample):
-            ind = np.random.randint(0, len(self.samples)-1)
-            samples.append(self.samples[ind])
+        if self.n < 0:
+            raise "Empty pool!"
+        if self.n == 1:
+            samples.append(self.samples[0])
+        else:
+            for i in range(n_sample):
+                ind = np.random.randint(0, self.n - 1)
+                samples.append(self.samples[ind])
         samples = torch.cat(samples, 0)
 
+        """
         if isinstance(samples, torch.cuda.FloatTensor):
-            return samples.cpu().numpy()
-        return samples.numpy()
+            return samples.cpu()
+        """
+        return samples
 
