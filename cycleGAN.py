@@ -224,7 +224,9 @@ class CycleGAN(object):
         self.ene_B = ene_B.data[0]
 
     def report_errors(self):
-        report = OrderedDict([("D_A", self.D_loss_A), ("D_B", self.D_loss_B),
+        report = OrderedDict([
+                    ("G_A", self.G_loss_A), ("G_B", self.G_loss_B),
+                    ("D_A", self.D_loss_A), ("D_B", self.D_loss_B),
                     ("Cyc_r_A", self.cyc_r_loss_A), ("Cyc_r_B", self.cyc_r_loss_B),
                     ("Cyc_i_A", self.cyc_i_loss_A), ("Cyc_i_B", self.cyc_i_loss_B),
                     ("Ene_A", self.ene_A), ("Ene_B", self.ene_B)])
