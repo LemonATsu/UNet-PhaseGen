@@ -83,11 +83,9 @@ def compute_feature(n_fft, hop_length, genres, chunk, rsr, unvoice, n_random, n_
             print("{} extracted.".format(path.split("/")[-1]))
         print("{} chunks are generated for {} in {} secs.".format(len(cks), genre, time.time()-start))
         cks = np.array(cks)
-        val_idx = np.random.choice(cks.shape[0], n_val, replace=False)
-        cks_v = cks[val_idx]
-        cks_t = cks[cks not in val_idx]
-        np.save("./output/{}_val.npy".format(genre), cks_v)
-        np.save("./output/{}_train.npy".format(genre), cks_t)
+        np.random.shuffle(cks)
+        np.save("./output/{}_val.npy".format(genre), cks_v[:n_val, ...])
+        np.save("./output/{}_train.npy".format(genre), cks_t[n_val:, ...])
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="select the genre(s) for extracting feature")
