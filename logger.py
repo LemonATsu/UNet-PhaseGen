@@ -6,7 +6,7 @@ LOG_TYPE = ["scalar", "audio", "image"]
 class Logger(object):
     def __init__(self, log_dir):
         self.log_dir = log_dir
-        self.writer = SummaryWriter()
+        self.writer = SummaryWriter(log_dir)
 
     def log(self, n_iter, report, log_type="scalar", sr=None, text=False):
         if log_type not in LOG_TYPE:
