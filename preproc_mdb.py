@@ -84,8 +84,8 @@ def compute_feature(n_fft, hop_length, genres, chunk, rsr, unvoice, n_random, n_
         print("{} chunks are generated for {} in {} secs.".format(len(cks), genre, time.time()-start))
         cks = np.array(cks)
         np.random.shuffle(cks)
-        np.save("./output/{}_val.npy".format(genre), cks_v[:n_val, ...])
-        np.save("./output/{}_train.npy".format(genre), cks_t[n_val:, ...])
+        np.save("./output/{}_val.npy".format(genre), cks[:n_val, ...])
+        np.save("./output/{}_train.npy".format(genre), cks[n_val:, ...])
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="select the genre(s) for extracting feature")
