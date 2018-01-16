@@ -22,7 +22,7 @@ def weights_init(m):
 class CycleGAN(object):
 
     def __init__(self, lr, lamb_A, lamb_B, lamb_I, lamb_E, output_dir, shape,
-                    batch_size, pool_size, gpu_id=None, is_training=True):
+                    batch_size, pool_size, gpu_id=None, is_training=True, fc=[0, 2], mc=[1, 3]):
 
         self.tensor = torch.cuda.FloatTensor if gpu_id else torch.Tensor
         self.is_training = is_training
@@ -36,9 +36,11 @@ class CycleGAN(object):
         self.lamb_I = lamb_I
         self.lamb_E = lamb_E
         self.gpu_id = gpu_id
+        self.fc = fc
+        self.mc = mc
 
-        self.input_A = self.tensor(batch_size, 2, self.shape[0], self.shape[1])
-        self.input_B = self.tensor(batch_size, 2, self.shape[0], self.shape[1])
+        self.input_A = self.tensor(batch_size, 4, self.shape[0], self.shape[1])
+        self.input_B = self.tensor(batch_size, 4, self.shape[0], self.shape[1])
 
         self.gen_A = self.build_G(2, 2, 8, self.gpu_id)
         self.gen_B = self.build_G(2, 2, 8, self.gpu_id)
@@ -92,7 +94,8 @@ class CycleGAN(object):
     def build_G(self, input_nc, output_nc, num_downs, gpu_ids):
         if not(isinstance(gpu_ids ,list)):
             gpu_ids = [gpu_ids]
-        G = UNetGenerator(input_nc, output_nc, num_downs, gpu_ids=gpu_ids)
+        #G = UNetGenerator(input_nc, output_nc, num_downs, gpu_ids=gpu_ids)
+        G = AxisCompressGenerator(input_nc, output_nc, num_downs, gpu_ids=gpu_ids)
         if len(gpu_ids) > 0:
             G.cuda(gpu_ids[0])
         G.apply(weights_init)
@@ -102,9 +105,9 @@ class CycleGAN(object):
         self.input_A.copy_(inputs["A"])
         self.input_B.copy_(inputs["B"])
 
-    def optimize(self, n_D=1):
+    def optimize(self, n_G=1, n_D=1):
         self.forward()
-        self.backward_G()
+        self.backward_G(n_G)
         self.backward_D(n_D)
 
     def sched_step(self):
@@ -130,8 +133,8 @@ class CycleGAN(object):
         fake_B = self.fplB.draw(self.fake_B)
         self.rplA.draw(self.input_A.clone())
         self.rplB.draw(self.input_B.clone())
-        real_A = self.real_A
-        real_B = self.real_B
+        real_A = self.real_A[:, self.fc, ...]
+        real_B = self.real_B[:, self.fc, ...]
 
         D_loss_As = []
         D_loss_Bs = []
@@ -153,23 +156,23 @@ class CycleGAN(object):
             # resample
             fake_A = Variable(self.fplA.get_samples(self.batch_size))
             fake_B = Variable(self.fplB.get_samples(self.batch_size))
-            real_A = Variable(self.rplA.get_samples(self.batch_size))
-            real_B = Variable(self.rplB.get_samples(self.batch_size))
+            real_A = Variable(self.rplA.get_samples(self.batch_size))[:, self.fc, ...]
+            real_B = Variable(self.rplB.get_samples(self.batch_size))[:, self.fc, ...]
 
         self.D_loss_A = np.mean(D_loss_As)
         self.D_loss_B = np.mean(D_loss_Bs)
 
-    def backward_G(self, step=True):
+    def backward_G(self, n_G=1, step=True):
         # reset gradient
         self.optim_G.zero_grad()
 
         # discriminator A
-        fake_A = self.gen_A(self.real_B)
+        fake_A = self.gen_A(self.real_B[:, self.mc, ...])
         pred_A = self.dis_A(fake_A)
         G_loss_A = self.GAN_loss(pred_A, True) # fool dis_A to think it's true
 
         # discriminator B
-        fake_B = self.gen_B(self.real_A)
+        fake_B = self.gen_B(self.real_A[:, self.mc, ...])
         pred_B = self.dis_B(fake_B)
         G_loss_B = self.GAN_loss(pred_B, True) # fool dis_B to think it's true
 
@@ -177,23 +180,31 @@ class CycleGAN(object):
         # cycle loss
         # caculate real/imaginary part respectively
         rec_A = self.gen_A(fake_B)
-        cyc_r_loss_A = self.cycle_loss(rec_A[:, 0, :, :], self.real_A[:, 0, :, :]) * self.lamb_A
-        cyc_i_loss_A = self.cycle_loss(rec_A[:, 1, :, :], self.real_A[:, 1, :, :]) * self.lamb_A
+        cyc_r_loss_A = self.lamb_A * self.cycle_loss(rec_A[:, 0, :, :], 
+                          self.real_A[:, self.fc[0], :, :])
+        cyc_i_loss_A = self.lamb_A * self.cycle_loss(rec_A[:, 1, :, :], 
+                          self.real_A[:, self.fc[1], :, :])
 
         rec_B = self.gen_B(fake_A)
-        cyc_r_loss_B = self.cycle_loss(rec_B[:, 0, :, :], self.real_B[:, 0, :, :]) * self.lamb_B
-        cyc_i_loss_B = self.cycle_loss(rec_B[:, 1, :, :], self.real_B[:, 1, :, :]) * self.lamb_B
+        cyc_r_loss_B = self.lamb_B * self.cycle_loss(rec_B[:, 0, :, :], 
+                          self.real_B[:, self.fc[0], :, :])
+        cyc_i_loss_B = self.lamb_B * self.cycle_loss(rec_B[:, 1, :, :], 
+                          self.real_B[:, self.fc[1], :, :])
 
         # energy loss
-        ene_A = self.energy_loss(fake_A, self.real_B) * self.lamb_E
-        ene_B = self.energy_loss(fake_B, self.real_A) * self.lamb_E
+        ene_A = self.lamb_E * self.energy_loss(fake_A, 
+                  self.real_B[:, self.fc, ...])
+        ene_B = self.lamb_E * self.energy_loss(fake_B, 
+                  self.real_A[:, self.fc, ...])
 
         # calculate identity loss
         if self.lamb_I > 0.0:
-            idt_A = self.gen_A(self.real_A)
-            idt_B = self.gen_B(self.real_B)
-            idt_loss_A = self.identity_loss(idt_A, self.real_A) * self.lamb_A * self.lamb_I
-            idt_loss_B = self.identity_loss(idt_A, self.real_B) * self.lamb_B * self.lamb_I
+            idt_A = self.gen_A(self.real_A[:, self.fc, ...])
+            idt_B = self.gen_B(self.real_B[:, self.fc, ...])
+            idt_loss_A = self.lamb_A * self.lamb_I * self.identity_loss(idt_A, 
+                            self.real_A[:, self.fc, ...])
+            idt_loss_B = self.lamb_B * self.lamb_I * self.identity_loss(idt_B, 
+                            self.real_B[:, self.fc, ...])
 
             self.idt_A = idt_A.data
             self.idt_B = idt_B.data
@@ -243,8 +254,8 @@ class CycleGAN(object):
     def generate(self):
         real_A = Variable(self.input_A, volatile=True)
         real_B = Variable(self.input_B, volatile=True)
-        fake_A = self.gen_A(real_B)
-        fake_B = self.gen_B(real_A)
+        fake_A = self.gen_A(real_B[:, self.fc, ...])
+        fake_B = self.gen_B(real_A[:, self.fc, ...])
         recn_A = self.gen_A(fake_B)
         recn_B = self.gen_B(fake_A)
 
@@ -296,9 +307,59 @@ class NLayerDiscriminator(nn.Module):
                 norm_layer(ndf * nf_mul),
                 nn.LeakyReLU(0.2, True),
                 nn.Conv2d(ndf * nf_mul, 1, kernel_size=k_size, stride=1, padding=padding),
-                View(-1, 217),
-                nn.Linear(217, 1)]
+                View(-1, 93),
+                nn.Linear(93, 1)]
         self.model = nn.Sequential(*seq)
+
+    def forward(self, input):
+        if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
+            r = nn.parallel.data_parallel(self.model, input, self.gpu_ids)
+        else:
+            r = self.model(input)
+        return r
+
+class AxisCompressGenerator(nn.Module):
+    def __init__(self, input_nc, output_nc, num_downs, ngf=32,
+                  norm_layer=nn.BatchNorm2d, gpu_ids=[]):
+        self.gpu_ids = gpu_ids
+        super(AxisCompressGenerator, self).__init__()
+
+        # (256, 32, 32)
+        unet_block = UNetBlock(ngf * 8, ngf * 8, input_nc=None,
+                    submodule=None, norm_layer=norm_layer,
+                    k_size=(1, 2), stride=(1, 1), padding=(0, 1), pos="innermost")
+
+        # (256, 32, 64)
+        unet_block = UNetBlock(ngf * 8, ngf * 8, input_nc=None,
+                    submodule=unet_block, norm_layer=norm_layer,
+                    k_size=(1, 4), stride=(1, 2), padding=(0, 1))
+
+        # (256, 32, 128)
+        unet_block = UNetBlock(ngf * 8, ngf * 8, input_nc=None,
+                    submodule=unet_block, norm_layer=norm_layer,
+                    k_size=(1, 16), stride=(1, 2), padding=(0, 7))
+
+        # (128, 32, 256)
+        unet_block = UNetBlock(ngf * 4, ngf * 8, input_nc=None,
+                    submodule=unet_block, norm_layer=norm_layer,
+                    k_size=(2, 1), stride=(2, 1), padding=(0, 0))
+
+        # (128, 64, 256)
+        unet_block = UNetBlock(ngf * 2, ngf * 4, input_nc=None,
+                    submodule=unet_block, norm_layer=norm_layer,
+                    k_size=(4, 1), stride=(2, 1), padding=(1, 0))
+
+        # (128, 128, 256)
+        unet_block = UNetBlock(ngf * 1, ngf * 2, input_nc=None,
+                    submodule=unet_block, norm_layer=norm_layer,
+                    k_size=(16, 1), stride=(2, 1), padding=(7, 0))
+
+        # (64, 256, 256)
+        unet_block = UNetBlock(output_nc, ngf, input_nc=input_nc,
+                    submodule=unet_block, norm_layer=norm_layer,
+                    k_size=(64, 1), stride=(4, 1), padding=(31, 0), pos="outermost", transpose=(30, 0))
+
+        self.model = unet_block
 
     def forward(self, input):
         if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
@@ -331,7 +392,8 @@ class UNetGenerator(nn.Module):
 class UNetBlock(nn.Module):
     def __init__(self, outer_nc, inner_nc, input_nc=None,
                 k_size=(4,4), stride=(2,2), padding=(1,1),
-                submodule=None, pos=None, norm_layer=nn.BatchNorm2d):
+                submodule=None, pos=None, norm_layer=nn.BatchNorm2d,
+                transpose=None):
         super(UNetBlock, self).__init__()
         self.pos = pos
         self.outermost = False
@@ -342,6 +404,8 @@ class UNetBlock(nn.Module):
             use_bias = norm_layer == nn.InstanceNorm2d
         if input_nc == None:
             input_nc = outer_nc
+        if transpose == None:
+            transpose = padding
 
         downconv = nn.Conv2d(input_nc, inner_nc, kernel_size=k_size,
                              stride=stride, padding=padding, bias=use_bias)
@@ -354,20 +418,20 @@ class UNetBlock(nn.Module):
             # inner_nc * 2: it takes as input cat([x, submodule(x)])
             self.outermost = True
             upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc, kernel_size=k_size,
-                                        stride=stride, padding=padding, bias=use_bias)
+                                        stride=stride, padding=transpose, bias=use_bias)
             down = [downconv]
             up = [uprelu, upconv, upnorm]
             model = down + [submodule] + up
         elif pos == "innermost":
             upconv = nn.ConvTranspose2d(inner_nc, outer_nc, kernel_size=k_size,
-                                        stride=stride, padding=padding, bias=use_bias)
+                                        stride=stride, padding=transpose, bias=use_bias)
             down = [downrelu, downconv]
             up = [uprelu, upconv, upnorm]
             model = down + up
         else:
             # inner_nc * 2: it takes as input cat([x, submodule(x)])
             upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc, kernel_size=k_size,
-                                        stride=stride, padding=padding, bias=use_bias)
+                                        stride=stride, padding=transpose, bias=use_bias)
             down = [downrelu, downconv, downnorm]
             up = [uprelu, upconv, upnorm]
             model = down + [submodule] + up

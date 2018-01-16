@@ -27,7 +27,8 @@ def get_real_and_imag(data):
         return data
     real = np.real(data)
     imag = np.imag(data)
-    return np.concatenate([real[:, np.newaxis, ...], imag[:, np.newaxis, ...]], axis=1)
+    return np.concatenate([real, imag], axis=1)
+    #return np.concatenate([real[:, np.newaxis, 0, ...], imag[:, np.newaxis, 0, ...]], axis=1)
 
 
 if __name__ == "__main__":
@@ -36,7 +37,7 @@ if __name__ == "__main__":
 
     model = NLayerDiscriminator(2, ndf=32, n_layers=4, gpu_ids=[3])
     loader = get_fft_npy_loader(
-            ["unvoiced/Jazz.npy", "unvoiced/Classical.npy"],
+            ["dataset/Jazz_audio_train.npy", "dataset/Pop_audio_train.npy"],
             [0, 1], batch_size=32)
 
     lr = 1e-3
@@ -51,6 +52,7 @@ if __name__ == "__main__":
             start = time.time()
             optim.zero_grad()
             pred = model.forward(Variable(d[0]))
+            print(pred.size())
             loss = lossf(m(pred), Variable(d[1]))
             loss.backward()
             optim.step()
