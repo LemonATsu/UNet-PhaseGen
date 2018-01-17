@@ -23,7 +23,7 @@ class CycleGAN(object):
 
     def __init__(self, lr, lamb_A, lamb_B, lamb_I, lamb_E, output_dir, shape,
                     batch_size, pool_size, gpu_id=None, is_training=True, fc=[0, 2], mc=[1, 3], 
-                    lamb_k=0.001, gamma=0.5, mtype=None):
+                    lamb_k=0.001, gamma=0.8, mtype=None):
 
         self.tensor = torch.cuda.FloatTensor if gpu_id else torch.Tensor
         self.is_training = is_training
