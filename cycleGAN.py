@@ -90,7 +90,7 @@ class CycleGAN(object):
         if mtype is None:
             D = NLayerDiscriminator(input_nc, n_layers=n_layers, gpu_ids=gpu_ids)
         elif mtype == "BE":
-            D = AEModel(input_nc, input_nc, gpu_ids=gpu_ids)
+            D = AEModel(input_nc, input_nc, gpu_ids=gpu_ids, batch_size=self.batch_size)
         else:
             raise NotImplementedError
 
@@ -109,7 +109,7 @@ class CycleGAN(object):
         if mtype is None:
             G = AxisCompressGenerator(input_nc, output_nc, num_downs, gpu_ids=gpu_ids)
         elif mtype == "BE":
-            G = AEModel(input_nc, input_nc, gpu_ids=gpu_ids)
+            G = AEModel(input_nc, input_nc, gpu_ids=gpu_ids, batch_size=self.batch_size)
         else:
             raise NotImplementedError
 
@@ -381,6 +381,8 @@ class CycleGAN(object):
             report["ene_B"] = self.ene_B
         report["M_A"] = self.M_A
         report["M_B"] = self.M_B
+        report["kt_A"] = self.kt_A
+        report["kt_B"] = self.kt_B
         return report
 
     def get_samples(self, n_sample):
@@ -528,23 +530,33 @@ class UNetGenerator(nn.Module):
 
 
 class AEModel(nn.Module):
-    def __init__(self, input_nc, output_nc, n_f=3, n_t=2, batch_size=1, hidden=256, gpu_ids=[]):
+    def __init__(self, input_nc, output_nc, n_f=3, n_t=2, batch_size=1, hidden=256, gpu_ids=[], norm_layer=nn.BatchNorm2d):
         self.gpu_ids = gpu_ids
         self.batch_size = batch_size
         super(AEModel, self).__init__()
+        if type(norm_layer) == functools.partial:
+            # args are partially set.
+            use_bias = norm_layer.func == nn.InstanceNorm2d
+        else:
+            use_bias = norm_layer == nn.InstanceNorm2d
 
         encoder = [
             # compress freq
             nn.Conv2d(input_nc, 4, kernel_size=(16, 1), stride=(8, 1), padding=(8 - 1, 0)),
+            norm_layer(4),
             nn.LeakyReLU(0.2, True),
             nn.Conv2d(4, 8, kernel_size=(8, 1), stride=(4, 1), padding=(4 - 1, 0)),
+            norm_layer(8),
             nn.LeakyReLU(0.2, True),
             nn.Conv2d(8, 16, kernel_size=(4, 1), stride=(2, 1), padding=(2 - 1, 0)),
+            norm_layer(16),
             nn.LeakyReLU(0.2, True),
             # compress time
             nn.Conv2d(16, 32, kernel_size=(1, 8), stride=(1, 4), padding=(0, 4 - 1)),
+            norm_layer(32),
             nn.LeakyReLU(0.2, True),
             nn.Conv2d(32, 64, kernel_size=(1, 4), stride=(1, 2), padding=(0, 2 - 1)),
+            norm_layer(64),
             nn.LeakyReLU(0.2, True),
             View(batch_size, -1),
             nn.Linear(16384, 256)
@@ -554,15 +566,20 @@ class AEModel(nn.Module):
             View(batch_size, 1, 16, 16),
             # decode time
             nn.ConvTranspose2d(1, 4, kernel_size=(1, 4), stride=(1, 2), padding=(0, 2 - 1)),
+            norm_layer(4),
             nn.ReLU(True),
             nn.ConvTranspose2d(4, 4, kernel_size=(1, 8), stride=(1, 4), padding=(0, 2)),
+            norm_layer(4),
             nn.ReLU(True),
             # decode freq
             nn.ConvTranspose2d(4, 4, kernel_size=(4, 1), stride=(2, 1), padding=(2 - 1, 0)),
+            norm_layer(4),
             nn.ReLU(True),
             nn.ConvTranspose2d(4, 4, kernel_size=(8, 1), stride=(4, 1), padding=(2, 0)),
+            norm_layer(4),
             nn.ReLU(True),
             nn.ConvTranspose2d(4, 2, kernel_size=(16, 1), stride=(8, 1), padding=(4, 0)),
+            norm_layer(2),
             nn.ReLU(True),
         ]
         seq = encoder + decoder
