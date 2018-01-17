@@ -22,7 +22,8 @@ def weights_init(m):
 class CycleGAN(object):
 
     def __init__(self, lr, lamb_A, lamb_B, lamb_I, lamb_E, output_dir, shape,
-                    batch_size, pool_size, gpu_id=None, is_training=True, fc=[0, 2], mc=[1, 3]):
+                    batch_size, pool_size, gpu_id=None, is_training=True, fc=[0, 2], mc=[1, 3], 
+                    lamb_k=0.001, gamma=0.5, mtype=None):
 
         self.tensor = torch.cuda.FloatTensor if gpu_id else torch.Tensor
         self.is_training = is_training
@@ -36,18 +37,23 @@ class CycleGAN(object):
         self.lamb_I = lamb_I
         self.lamb_E = lamb_E
         self.gpu_id = gpu_id
+        self.lamb_k = lamb_k
+        self.gamma = gamma
         self.fc = fc
         self.mc = mc
+        if mtype == "BE":
+            self.kt_A = 0.
+            self.kt_B = 0.
 
         self.input_A = self.tensor(batch_size, 4, self.shape[0], self.shape[1])
         self.input_B = self.tensor(batch_size, 4, self.shape[0], self.shape[1])
 
-        self.gen_A = self.build_G(2, 2, 8, self.gpu_id)
-        self.gen_B = self.build_G(2, 2, 8, self.gpu_id)
+        self.gen_A = self.build_G(2, 2, 8, mtype, self.gpu_id)
+        self.gen_B = self.build_G(2, 2, 8, mtype, self.gpu_id)
 
         if self.is_training:
-            self.dis_A = self.build_D(2, 4, self.gpu_id)
-            self.dis_B = self.build_D(2, 4, self.gpu_id)
+            self.dis_A = self.build_D(2, 3, mtype, self.gpu_id)
+            self.dis_B = self.build_D(2, 3, mtype, self.gpu_id)
 
             # fake pool
             self.fplA = Pool(self.pool_size)
@@ -60,17 +66,12 @@ class CycleGAN(object):
             self.cycle_loss = torch.nn.L1Loss()
             self.identity_loss = torch.nn.L1Loss() # if the input is from its target domain, it should output an identity one.
             self.energy_loss = EnergyLoss()
+            self.BE_loss = torch.nn.L1Loss()
 
             self.optim_G = torch.optim.Adam(
                     itertools.chain(self.gen_A.parameters(), self.gen_B.parameters()),
                     lr=self.lr, betas=(0.5, 0.999)
                 )
-            """
-            self.optim_D = torch.optim.Adam(
-                    lr=self.lr,
-                    itertools.chain(self.dis_A.parameters(), self.dis_B.parameters()),
-                )
-            """
             self.optim_D_A = torch.optim.Adam(self.dis_A.parameters(), lr=self.lr, betas=(0.5, 0.999))
             self.optim_D_B = torch.optim.Adam(self.dis_B.parameters(), lr=self.lr, betas=(0.5, 0.999))
             self.optims = [self.optim_G, self.optim_D_A, self.optim_D_B]
@@ -81,21 +82,37 @@ class CycleGAN(object):
                     torch.optim.lr_scheduler.MultiStepLR(optim, epochs)
                 )
 
-    def build_D(self, input_nc, n_layers, gpu_ids):
+    def build_D(self, input_nc, n_layers, mtype, gpu_ids):
         if not(isinstance(gpu_ids ,list)):
             gpu_ids = [gpu_ids]
-        D = NLayerDiscriminator(input_nc, n_layers=n_layers, gpu_ids=gpu_ids)
+        print("Build D: type {}".format(mtype))
+
+        if mtype is None:
+            D = NLayerDiscriminator(input_nc, n_layers=n_layers, gpu_ids=gpu_ids)
+        elif mtype == "BE":
+            D = AEModel(input_nc, input_nc, gpu_ids=gpu_ids)
+        else:
+            raise NotImplementedError
+
         if len(gpu_ids) > 0:
             D.cuda(gpu_ids[0])
         D.apply(weights_init)
         return D
 
 
-    def build_G(self, input_nc, output_nc, num_downs, gpu_ids):
+    def build_G(self, input_nc, output_nc, num_downs, mtype, gpu_ids):
         if not(isinstance(gpu_ids ,list)):
             gpu_ids = [gpu_ids]
+
         #G = UNetGenerator(input_nc, output_nc, num_downs, gpu_ids=gpu_ids)
-        G = AxisCompressGenerator(input_nc, output_nc, num_downs, gpu_ids=gpu_ids)
+        print("Build G: type {}".format(mtype))
+        if mtype is None:
+            G = AxisCompressGenerator(input_nc, output_nc, num_downs, gpu_ids=gpu_ids)
+        elif mtype == "BE":
+            G = AEModel(input_nc, input_nc, gpu_ids=gpu_ids)
+        else:
+            raise NotImplementedError
+
         if len(gpu_ids) > 0:
             G.cuda(gpu_ids[0])
         G.apply(weights_init)
@@ -105,10 +122,15 @@ class CycleGAN(object):
         self.input_A.copy_(inputs["A"])
         self.input_B.copy_(inputs["B"])
 
-    def optimize(self, n_G=1, n_D=1):
+    def optimize(self, n_G=1, n_D=1, mtype=None):
         self.forward()
-        self.backward_G(n_G)
-        self.backward_D(n_D)
+        if mtype is None:
+            self.backward_G(n_G)
+            self.backward_D(n_D)
+        elif mtype == "BE":
+            self.backward_BE()
+        else:
+            raise NotImplementedError
 
     def sched_step(self):
         for s in self.lr_scheds:
@@ -118,10 +140,104 @@ class CycleGAN(object):
         self.real_A = Variable(self.input_A)
         self.real_B = Variable(self.input_B)
 
+    def _get_D_loss_BE(self, dis, real, fake, kt):
+        # detach the fake variable to prevent gradient flowing back
+        AE_x = dis(real)
+        AE_g = dis(fake)
+        D_loss_real = self.BE_loss(AE_x, real)
+        D_loss_fake = self.BE_loss(AE_g, fake)
+        D_loss = D_loss_real - kt * D_loss_fake 
+        balance = (self.gamma * D_loss_real - D_loss_fake).data[0] 
+        return D_loss, D_loss_real, balance
+
+    def _get_G_loss_BE(self, dis, fake):
+        AE_g = dis(fake).detach()
+        G_loss = self.BE_loss(fake, AE_g)
+        return G_loss
+
+    def _get_cyc_loss(self, gen, real, fake, lamb):
+        rec = gen(fake)
+        cyc_r_loss = lamb * self.cycle_loss(rec[:, 0, ...], real[:, 0, ...])
+        cyc_i_loss = lamb * self.cycle_loss(rec[:, 1, ...], real[:, 1, ...])
+        return cyc_r_loss, cyc_i_loss
+
+    def _get_idt_loss(self, gen, real, lamb):
+        idt = gen(real)
+        idt_loss = lamb * self.lamb_I * self.identity_loss(idt, real)
+        return idt_loss
+
+    def backward_BE(self):
+
+        # Let's try full-mix first
+        real_A = self.real_A[:, self.fc, ...]
+        real_B = self.real_B[:, self.fc, ...]
+
+        # Get fake things
+        fake_A = self.gen_A(real_B)
+        fake_B = self.gen_B(real_A)
+
+        # Put things into pool
+        sample_A = self.fplA.draw(fake_A.data)
+        sample_B = self.fplB.draw(fake_B.data)
+        self.rplA.draw(self.input_A.clone())
+        self.rplB.draw(self.input_B.clone())
+
+        # Get D loss
+        # train with samples
+        D_loss_A, D_loss_real_A, balance_A = self._get_D_loss_BE(self.dis_A, real_A, sample_A, self.kt_A)
+        D_loss_B, D_loss_real_B, balance_B = self._get_D_loss_BE(self.dis_B, real_B, sample_B, self.kt_B)
+
+        # update k
+        self.kt_A = min(max(self.kt_A + self.lamb_k * balance_A, 0), 1) 
+        self.kt_B = min(max(self.kt_B + self.lamb_k * balance_B, 0), 1) 
+
+        # Get G loss
+        G_loss_A = self._get_G_loss_BE(self.dis_A, fake_A)
+        G_loss_B = self._get_G_loss_BE(self.dis_B, fake_B)
+
+        # cycle loss
+        cyc_r_loss_A, cyc_i_loss_A = self._get_cyc_loss(self.gen_A, real_A, fake_B, self.lamb_A)
+        cyc_r_loss_B, cyc_i_loss_B = self._get_cyc_loss(self.gen_B, real_B, fake_A, self.lamb_B)
+
+        # identity loss
+        idt_loss_A = self._get_idt_loss(self.gen_A, real_A, self.lamb_A)
+        idt_loss_B = self._get_idt_loss(self.gen_B, real_B, self.lamb_B)
+
+        G_loss = G_loss_A + G_loss_B + \
+                     (cyc_r_loss_A + cyc_i_loss_A) * 0.5 + \
+                     (cyc_r_loss_B + cyc_i_loss_B) * 0.5 + \
+                     idt_loss_A + idt_loss_B 
+        # take the optimization step    
+        self.optim_G.zero_grad()
+        G_loss.backward()
+        self.optim_G.step()
+
+        self.optim_D_A.zero_grad()
+        self.optim_D_B.zero_grad()
+        D_loss_A.backward()
+        D_loss_B.backward()
+        self.optim_D_A.step()
+        self.optim_D_B.step()
+
+        # BE measure
+        self.M_A = D_loss_real_A.data[0] + abs(balance_A)
+        self.M_B = D_loss_real_B.data[0] + abs(balance_B)
+
+        self.D_loss_A = D_loss_A.data[0]
+        self.D_loss_B = D_loss_B.data[0]
+        self.G_loss_A = G_loss_A.data[0]
+        self.G_loss_B = G_loss_B.data[0]
+        self.idt_loss_A = idt_loss_A.data[0]
+        self.idt_loss_B = idt_loss_B.data[0]
+        self.cyc_r_loss_A = cyc_r_loss_A.data[0]
+        self.cyc_i_loss_A = cyc_i_loss_A.data[0]
+        self.cyc_r_loss_B = cyc_r_loss_B.data[0]
+        self.cyc_i_loss_B = cyc_i_loss_B.data[0]
+
     def _backward_D(self, dis, real, fake):
         pred_real = dis(real)
         D_loss_real = self.GAN_loss(pred_real, True)
-        pred_fake = dis(fake.detach())
+        pred_fake = dis(fake.detach()) # stop gradient from flowing back to G 
         D_loss_fake = self.GAN_loss(pred_fake, False)
         D_loss = (D_loss_real + D_loss_fake) * 0.5
         D_loss.backward()
@@ -129,15 +245,13 @@ class CycleGAN(object):
 
     def backward_D(self, n_D=1, step=True):
         # put data into pool
+        D_loss_As, D_loss_Bs = [], []
         fake_A = self.fplA.draw(self.fake_A)
         fake_B = self.fplB.draw(self.fake_B)
         self.rplA.draw(self.input_A.clone())
         self.rplB.draw(self.input_B.clone())
         real_A = self.real_A[:, self.fc, ...]
         real_B = self.real_B[:, self.fc, ...]
-
-        D_loss_As = []
-        D_loss_Bs = []
 
         for i in range(n_D):
             # reset gradient
@@ -163,87 +277,110 @@ class CycleGAN(object):
         self.D_loss_B = np.mean(D_loss_Bs)
 
     def backward_G(self, n_G=1, step=True):
-        # reset gradient
-        self.optim_G.zero_grad()
+        real_A = self.real_A
+        real_B = self.real_B
 
-        # discriminator A
-        fake_A = self.gen_A(self.real_B[:, self.mc, ...])
-        pred_A = self.dis_A(fake_A)
-        G_loss_A = self.GAN_loss(pred_A, True) # fool dis_A to think it's true
-
-        # discriminator B
-        fake_B = self.gen_B(self.real_A[:, self.mc, ...])
-        pred_B = self.dis_B(fake_B)
-        G_loss_B = self.GAN_loss(pred_B, True) # fool dis_B to think it's true
+        G_loss_As, G_loss_Bs = [], []
+        cyc_r_loss_As, cyc_i_loss_As = [], []
+        cyc_r_loss_Bs, cyc_i_loss_Bs = [], []
+        ene_As, ene_Bs = [], []
 
 
-        # cycle loss
-        # caculate real/imaginary part respectively
-        rec_A = self.gen_A(fake_B)
-        cyc_r_loss_A = self.lamb_A * self.cycle_loss(rec_A[:, 0, :, :], 
-                          self.real_A[:, self.fc[0], :, :])
-        cyc_i_loss_A = self.lamb_A * self.cycle_loss(rec_A[:, 1, :, :], 
-                          self.real_A[:, self.fc[1], :, :])
+        for i in range(n_G):
+            self.optim_G.zero_grad()
+            fake_A = self.gen_A(real_B[:, self.mc, ...])
+            pred_A = self.dis_A(fake_A)
+            G_loss_A = self.GAN_loss(pred_A, True) # fool dis_A
 
-        rec_B = self.gen_B(fake_A)
-        cyc_r_loss_B = self.lamb_B * self.cycle_loss(rec_B[:, 0, :, :], 
-                          self.real_B[:, self.fc[0], :, :])
-        cyc_i_loss_B = self.lamb_B * self.cycle_loss(rec_B[:, 1, :, :], 
-                          self.real_B[:, self.fc[1], :, :])
+            fake_B = self.gen_B(real_A[:, self.mc, ...])
+            pred_B = self.dis_B(fake_B)
+            G_loss_B = self.GAN_loss(pred_B, True) # fool dis_B
 
-        # energy loss
-        ene_A = self.lamb_E * self.energy_loss(fake_A, 
-                  self.real_B[:, self.fc, ...])
-        ene_B = self.lamb_E * self.energy_loss(fake_B, 
-                  self.real_A[:, self.fc, ...])
+            # cycle loss
+            # caculate real/imag part respectively
+            rec_A = self.gen_A(fake_B)
+            cyc_r_loss_A = self.lamb_A * self.cycle_loss(rec_A[:, 0, ...], real_A[:, self.fc[0], ...])
+            cyc_i_loss_A = self.lamb_A * self.cycle_loss(rec_A[:, 1, ...], real_A[:, self.fc[1], ...])
 
-        # calculate identity loss
-        if self.lamb_I > 0.0:
-            idt_A = self.gen_A(self.real_A[:, self.fc, ...])
-            idt_B = self.gen_B(self.real_B[:, self.fc, ...])
-            idt_loss_A = self.lamb_A * self.lamb_I * self.identity_loss(idt_A, 
-                            self.real_A[:, self.fc, ...])
-            idt_loss_B = self.lamb_B * self.lamb_I * self.identity_loss(idt_B, 
-                            self.real_B[:, self.fc, ...])
+            # reconstruction loss
+            rec_B = self.gen_B(fake_A)
+            cyc_r_loss_B = self.lamb_B * self.cycle_loss(rec_B[:, 0, ...], real_B[:, self.fc[0], ...])
+            cyc_i_loss_B = self.lamb_B * self.cycle_loss(rec_B[:, 1, ...], real_B[:, self.fc[1], ...])
 
-            self.idt_A = idt_A.data
-            self.idt_B = idt_B.data
+            # energy loss
+            ene_A = self.lamb_E * self.energy_loss(fake_A, real_B[:, self.fc, ...])
+            ene_B = self.lamb_E * self.energy_loss(fake_B, real_A[:, self.fc, ...])
 
-        self.idt_loss_A = idt_loss_A.data[0] if self.lamb_I > 0.0 else 0.
-        self.idt_loss_B = idt_loss_B.data[0] if self.lamb_I > 0.0 else 0.
+            if self.lamb_I > 0.:
+                idt_A = self.gen_A(real_A[:, self.fc, ...])
+                idt_B = self.gen_B(real_B[:, self.fc, ...])
+                idt_loss_A = self.lamb_A * self.lamb_I * self.identity_loss(idt_A, real_A[:, self.fc, ...])
+                idt_loss_B = self.lamb_B * self.lamb_I * self.identity_loss(idt_B, real_B[:, self.fc, ...])
 
-        G_loss = G_loss_A + G_loss_B +  \
-                 (cyc_r_loss_A + cyc_i_loss_A) * 0.5 + \
-                 (cyc_r_loss_B + cyc_i_loss_B) * 0.5 + \
-                 idt_loss_A + idt_loss_B + \
-                 (ene_A + ene_B) * 0.5
-        G_loss.backward()
-        if step: self.optim_G.step()
+                self.idt_A = idt_A.data
+                self.idt_B = idt_B.data
 
-        self.fake_A = fake_A.data
-        self.fake_B = fake_B.data
-        self.rec_A = rec_A.data
-        self.rec_B = rec_B.data
+            self.idt_loss_A = idt_loss_A.data[0]
+            self.idt_loss_B = idt_loss_B.data[0]
 
-        self.G_loss_A = G_loss_A.data[0]
-        self.G_loss_B = G_loss_B.data[0]
-        self.cyc_r_loss_A = cyc_r_loss_A.data[0]
-        self.cyc_i_loss_A = cyc_i_loss_A.data[0]
-        self.cyc_r_loss_B = cyc_r_loss_B.data[0]
-        self.cyc_i_loss_B = cyc_i_loss_B.data[0]
-        self.ene_A = ene_A.data[0]
-        self.ene_B = ene_B.data[0]
+            # sum the loss and back-prop
+            G_loss = G_loss_A + G_loss_B + \
+                     (cyc_r_loss_A + cyc_i_loss_A) * 0.5 + \
+                     (cyc_r_loss_B + cyc_i_loss_B) * 0.5 + \
+                     idt_loss_A + idt_loss_B + \
+                     (ene_A + ene_B) * 0.5
+            G_loss.backward()
+            if step: self.optim_G.step()
+            
+            if i == 0:
+                # the data is sampled from dataset when i==0.
+                # therefore, set self.fake here, and it will be put
+                # into pool when the Ds are backwarding
+                self.fake_A = fake_A.data
+                self.fake_B = fake_B.data
+                self.rec_A = rec_A.data
+                self.rec_B = rec_B.data
+
+
+            G_loss_As.append(G_loss_A.data[0])
+            G_loss_Bs.append(G_loss_B.data[0])
+            cyc_r_loss_As.append(cyc_r_loss_A.data[0])
+            cyc_i_loss_As.append(cyc_i_loss_A.data[0])
+            cyc_r_loss_Bs.append(cyc_r_loss_B.data[0])
+            cyc_i_loss_Bs.append(cyc_i_loss_B.data[0])
+            ene_As.append(ene_A.data[0])
+            ene_Bs.append(ene_B.data[0])
+
+            if (n_G > 1) and (self.rplA.n > n_G) and (self.rplB.n > n_G): 
+                # sample new data
+                real_A = Variable(self.rplA.get_samples(self.batch_size))
+                real_B = Variable(self.rplB.get_samples(self.batch_size))
+            else:
+                break
+        
+        self.G_loss_A = np.mean(G_loss_As)
+        self.G_loss_B = np.mean(G_loss_Bs)
+        self.cyc_r_loss_A = np.mean(cyc_r_loss_As)
+        self.cyc_i_loss_A = np.mean(cyc_i_loss_As)
+        self.cyc_r_loss_B = np.mean(cyc_r_loss_Bs)
+        self.cyc_i_loss_B = np.mean(cyc_i_loss_Bs)
+        self.ene_A = np.mean(ene_As)
+        self.ene_B = np.mean(ene_Bs)
 
     def report_errors(self):
         report = OrderedDict([
                     ("G_A", self.G_loss_A), ("G_B", self.G_loss_B),
                     ("D_A", self.D_loss_A), ("D_B", self.D_loss_B),
                     ("Cyc_r_A", self.cyc_r_loss_A), ("Cyc_r_B", self.cyc_r_loss_B),
-                    ("Cyc_i_A", self.cyc_i_loss_A), ("Cyc_i_B", self.cyc_i_loss_B),
-                    ("Ene_A", self.ene_A), ("Ene_B", self.ene_B)])
+                    ("Cyc_i_A", self.cyc_i_loss_A), ("Cyc_i_B", self.cyc_i_loss_B)])
         if self.lamb_I > 0.0:
             report["idt_A"] = self.idt_loss_A
             report["idt_B"] = self.idt_loss_B
+        if self.lamb_E > 0.0:
+            report["ene_A"] = self.ene_A
+            report["ene_B"] = self.ene_B
+        report["M_A"] = self.M_A
+        report["M_B"] = self.M_B
         return report
 
     def get_samples(self, n_sample):
@@ -307,8 +444,8 @@ class NLayerDiscriminator(nn.Module):
                 norm_layer(ndf * nf_mul),
                 nn.LeakyReLU(0.2, True),
                 nn.Conv2d(ndf * nf_mul, 1, kernel_size=k_size, stride=1, padding=padding),
-                View(-1, 93),
-                nn.Linear(93, 1)]
+                View(-1, 441),
+                nn.Linear(441, 1)]
         self.model = nn.Sequential(*seq)
 
     def forward(self, input):
@@ -388,6 +525,55 @@ class UNetGenerator(nn.Module):
             return nn.parallel.data_parallel(self.model, input, self.gpu_ids)
         else:
             return self.model(input)
+
+
+class AEModel(nn.Module):
+    def __init__(self, input_nc, output_nc, n_f=3, n_t=2, batch_size=1, hidden=256, gpu_ids=[]):
+        self.gpu_ids = gpu_ids
+        self.batch_size = batch_size
+        super(AEModel, self).__init__()
+
+        encoder = [
+            # compress freq
+            nn.Conv2d(input_nc, 4, kernel_size=(16, 1), stride=(8, 1), padding=(8 - 1, 0)),
+            nn.LeakyReLU(0.2, True),
+            nn.Conv2d(4, 8, kernel_size=(8, 1), stride=(4, 1), padding=(4 - 1, 0)),
+            nn.LeakyReLU(0.2, True),
+            nn.Conv2d(8, 16, kernel_size=(4, 1), stride=(2, 1), padding=(2 - 1, 0)),
+            nn.LeakyReLU(0.2, True),
+            # compress time
+            nn.Conv2d(16, 32, kernel_size=(1, 8), stride=(1, 4), padding=(0, 4 - 1)),
+            nn.LeakyReLU(0.2, True),
+            nn.Conv2d(32, 64, kernel_size=(1, 4), stride=(1, 2), padding=(0, 2 - 1)),
+            nn.LeakyReLU(0.2, True),
+            View(batch_size, -1),
+            nn.Linear(16384, 256)
+        ]
+
+        decoder = [
+            View(batch_size, 1, 16, 16),
+            # decode time
+            nn.ConvTranspose2d(1, 4, kernel_size=(1, 4), stride=(1, 2), padding=(0, 2 - 1)),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(4, 4, kernel_size=(1, 8), stride=(1, 4), padding=(0, 2)),
+            nn.ReLU(True),
+            # decode freq
+            nn.ConvTranspose2d(4, 4, kernel_size=(4, 1), stride=(2, 1), padding=(2 - 1, 0)),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(4, 4, kernel_size=(8, 1), stride=(4, 1), padding=(2, 0)),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(4, 2, kernel_size=(16, 1), stride=(8, 1), padding=(4, 0)),
+            nn.ReLU(True),
+        ]
+        seq = encoder + decoder
+        self.model = nn.Sequential(*seq)
+            
+    def forward(self, input):
+        if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
+            return nn.parallel.data_parallel(self.model, input, self.gpu_ids)
+        else:
+            return self.model(input)
+
 
 class UNetBlock(nn.Module):
     def __init__(self, outer_nc, inner_nc, input_nc=None,
