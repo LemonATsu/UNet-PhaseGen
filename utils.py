@@ -1,8 +1,12 @@
+import matplotlib
+matplotlib.use("Agg")
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
 import librosa
+import librosa.display
+import matplotlib.pyplot as plt
 
 def generate_audio(matrix, sr, hop_length):
     stft = matrix[0, ...] + matrix[1, ...] * 1j
@@ -14,6 +18,28 @@ def generate_audio(matrix, sr, hop_length):
     audio = librosa.util.normalize(audio, norm=np.inf, axis=None)
     return audio
 
+def generate_spec_img(spec):
+    stft = spec[0, ...] + spec[1, ...] * 1j
+    D = librosa.amplitude_to_db(stft, ref=np.max)
+    fig = plt.figure(figsize=(3, 2))
+    librosa.display.specshow(D, y_axis="linear")
+    #plt.colorbar(format="%+2.0f dB")
+    plt.colorbar()
+    fig.canvas.draw()
+    img = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+    img = img.reshape(fig.canvas.get_width_height()[::-1] + (3, ))
+    plt.close()
+    return img
+
+def generate_waveplot(audio, sr):
+    fig = plt.figure(figsize=(3, 2))
+    librosa.display.waveplot(audio, sr=sr)
+    fig.canvas.draw()
+    img = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+    img = img.reshape(fig.canvas.get_width_height()[::-1] + (3, ))
+    plt.close()
+    return img
+    
 class View(nn.Module):
     def __init__(self, *shape):
         super(View, self).__init__()
@@ -34,7 +60,6 @@ class EnergyLoss(nn.Module):
 
     def _calc_amp(self, a):
         return torch.sqrt(a[:, 0, ...]**2 + a[:, 1, ...]**2 + 1e-10)
-
 
 
 class GANLoss(nn.Module):

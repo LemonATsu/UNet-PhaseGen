@@ -22,6 +22,9 @@ class Logger(object):
                 raise("Sample rate is required for saving audio data.")
             for k, v in report.items():
                 self.writer.add_audio(k, v, n_iter, sample_rate=sr)
+        elif log_type == "image":
+            for k, v in report.items():
+                self.writer.add_image(k, v, n_iter)
 
     def _print_scalars(self, n_iter, report):
         print("---------------------------")
@@ -29,6 +32,7 @@ class Logger(object):
         for k, v in report.items():
             print("{} : {:.4f}".format(k, v))
         print("---------------------------")
+
 
     def write(self):
         if not os.path.exists(self.log_dir):
@@ -43,12 +47,25 @@ class Logger(object):
 
 if __name__ == "__main__":
     import numpy as np
-    from utils import generate_audio
+    import librosa
+    import librosa.display
+    from utils import generate_audio, generate_spec_img, generate_waveplot
     from collections import OrderedDict
+    import matplotlib
+    import matplotlib.pyplot as plt
     logger = Logger("test/")
-    x = np.load("unvoiced/Jazz.npy", mmap_mode="r")
+    x = np.load("dataset/Jazz_audio_val.npy", mmap_mode="r")
     r, i = np.real(x[20]), np.imag(x[20])
-    c = np.concatenate([r[np.newaxis, ...], i[np.newaxis, ...]], axis=0)
+    c = np.concatenate([r[np.newaxis, 0, ...], i[np.newaxis, 0, ...]], axis=0)
+    img = generate_spec_img(c)
+    audio = generate_audio(c, sr=8000, hop_length=512)
+    wav = generate_waveplot(audio, sr=8000)
+    report = OrderedDict([("testimg", img), ("wave", wav)])
+    logger.log(1, report, log_type="image")
+    logger.write()
+    logger.flush()
+    """
+    audio = generate_audio(c, sr=16000, hop_length=512)
     audio = generate_audio(c, sr=16000, hop_length=512)
     print("generated")
     report = OrderedDict([("a20.wav", audio)])
@@ -57,4 +74,5 @@ if __name__ == "__main__":
     logger.write()
     logger.flush()
     print("log done")
+    """
 

@@ -86,11 +86,13 @@ def _chunk_and_stft(audio, start, t_slice, n_fft, hop_length):
     chunk = audio[:, start:start+t_slice]
     if len(chunk[0]) < t_slice:
         chunk = np.pad(chunk, [(0, 0), (0, t_slice - len(chunk[0]))], "constant")
-        print("padded {}".format(chunk.shape))
+        # print("padded {}".format(chunk.shape))
 
     for c in chunk:
         # remove dc components, for that it's not important for our task at all
         stft = np.delete(librosa.stft(c, n_fft=n_fft, hop_length=hop_length), (0), axis=0)
+        r, i = np.real(stft), np.imag(stft)
+        stft = np.concatenate([r[np.newaxis, ...], i[np.newaxis, ...]], axis=0)
         stfts.append(stft)
     return stfts
 
@@ -107,10 +109,10 @@ def get_mix_chunks(fn, t_slice, n_fft, hop_length, n_random, rsr, osr=44100):
     mix = []
 
     for f in fn:
-      m = librosa.load(f, sr=osr)[0]
-      if rsr != osr:
-          m = librosa.resample(m, orig_sr=osr, target_sr=rsr)
-      mix.append(m)
+        m = librosa.load(f, sr=osr)[0]
+        if rsr != osr:
+            m = librosa.resample(m, orig_sr=osr, target_sr=rsr)
+        mix.append(m)
     return chunk_audio(np.asarray(mix), t_slice, n_fft, hop_length, n_random)
 
 def get_instruments_attrs(instruments, instruments_dict, n):
@@ -171,10 +173,15 @@ def compute_feature(n_fft, hop_length, genres, chunk, rsr, unvoice, melody, bass
         print("We have {} clips for {}.".format(len(audio_chunks), g))
         idx = np.linspace(0, len(audio_chunks)-1, len(audio_chunks), dtype=int)
         np.random.shuffle(idx)
-        print(np.asarray(audio_chunks).shape)
 
-        train_set["audio"] = np.asarray(audio_chunks)[idx][n_val:, ...]
-        val_set["audio"] = np.asarray(audio_chunks)[idx][:n_val, ...]
+        audio_chunks = np.asarray(audio_chunks, dtype=np.float32)
+        print("shape: {}, type: {}".format(audio_chunks.shape, audio_chunks.dtype))
+        if audio_chunks.shape[1] == 1:
+            audio_chunks = np.squeeze(audio_chunks, axis=1)
+        print(audio_chunks.shape)
+        audio_chunks = (audio_chunks - audio_chunks.mean()) / audio_chunks.std()
+        train_set["audio"] = audio_chunks[idx][n_val:, ...]
+        val_set["audio"] = audio_chunks[idx][:n_val, ...]
 
         print(train_set["audio"].shape)
         print(val_set["audio"].shape)
@@ -197,7 +204,7 @@ if __name__ == "__main__":
     parser.add_argument("--chunk", default=8.128, type=float, help="size of data (in second)")
     parser.add_argument("--n_random", default=[30], nargs="+", type=int, help="number of randomly generated clip for each chunk")
     parser.add_argument("--unvoice", default=True, action="store_false", help="use unvoice version of tracks")
-    parser.add_argument("--melody", default=True, action="store_false", help="use melody tracks")
+    parser.add_argument("--melody", default=False, action="store_true", help="use melody tracks")
     parser.add_argument("--bass", default=False, action="store_true", help="use bass track")
     parser.add_argument("--rsr", default=8000, type=int, help="sample rate after being resampled")
     parser.add_argument("--n_val", default=1000, type=int, help="sample rate after being resampled")
