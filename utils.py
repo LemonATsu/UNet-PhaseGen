@@ -47,6 +47,15 @@ class View(nn.Module):
     def forward(self, input):
         return input.view(*self.shape)
 
+class Transpose(nn.Module):
+    def __init__(self, dim0, dim1):
+        super(Transpose, self).__init__()
+        self.dim0 = dim0
+        self.dim1 = dim1
+    def forward(self, input):
+        t = torch.transpose(input, self.dim0, self.dim1)
+        return t.contiguous()
+
 class EnergyLoss(nn.Module):
     def __init__(self, tensor=torch.FloatTensor):
         super(EnergyLoss, self).__init__()
