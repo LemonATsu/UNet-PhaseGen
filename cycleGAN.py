@@ -4,11 +4,7 @@ from torch.nn import init
 import torch.optim.lr_scheduler
 from torch.autograd import Variable
 import itertools, functools
-<<<<<<< HEAD
 from utils import Pool, GANLoss, View, EnergyLoss, Transpose, Flatten
-=======
-from utils import Pool, GANLoss, View, EnergyLoss, Transpose
->>>>>>> 390c650b5cdeba84ed398ee7a42aaf6db89be465
 from collections import OrderedDict
 import os
 import numpy as np
@@ -26,11 +22,7 @@ def weights_init(m):
 class CycleGAN(object):
 
     def __init__(self, lr, lamb_A, lamb_B, lamb_I, lamb_E, output_dir, shape,
-<<<<<<< HEAD
                     batch_size, pool_size, gpu_id=None, is_training=True, fc=[0, 2], mc=[1, 3],
-=======
-                    batch_size, pool_size, gpu_id=None, is_training=True, fc=[0, 2], mc=[1, 3], 
->>>>>>> 390c650b5cdeba84ed398ee7a42aaf6db89be465
                     lamb_k=0.0001, gamma=0.9, mtype=None, lamb_G=2.):
 
         self.tensor = torch.cuda.FloatTensor if gpu_id else torch.Tensor
@@ -157,11 +149,7 @@ class CycleGAN(object):
         AE_g = dis(fake)
         D_loss_real = self.BE_loss(AE_x, real)
         D_loss_fake = self.BE_loss(AE_g, fake)
-<<<<<<< HEAD
         D_loss = D_loss_real - kt * D_loss_fake
-=======
-        D_loss = D_loss_real - kt * D_loss_fake 
->>>>>>> 390c650b5cdeba84ed398ee7a42aaf6db89be465
         return D_loss, D_loss_real
 
     def _get_G_loss_BE(self, dis, fake):
@@ -207,17 +195,10 @@ class CycleGAN(object):
         G_loss_B = self._get_G_loss_BE(self.dis_B, fake_B)
 
         # update k
-<<<<<<< HEAD
         balance_A = (self.gamma * D_loss_real_A - G_loss_A).data[0]
         balance_B = (self.gamma * D_loss_real_B - G_loss_B).data[0]
         self.kt_A = min(max(self.kt_A + self.lamb_k * balance_A, 0.01), 1)
         self.kt_B = min(max(self.kt_B + self.lamb_k * balance_B, 0.01), 1)
-=======
-        balance_A = (self.gamma * D_loss_real_A - G_loss_A).data[0] 
-        balance_B = (self.gamma * D_loss_real_B - G_loss_B).data[0]
-        self.kt_A = min(max(self.kt_A + self.lamb_k * balance_A, 0.01), 1) 
-        self.kt_B = min(max(self.kt_B + self.lamb_k * balance_B, 0.01), 1) 
->>>>>>> 390c650b5cdeba84ed398ee7a42aaf6db89be465
 
         # cycle loss
         cyc_r_loss_A, cyc_i_loss_A = self._get_cyc_loss(self.gen_A, real_A, fake_B, self.lamb_A)
@@ -226,11 +207,7 @@ class CycleGAN(object):
         # identity loss
         idt_loss_A = self._get_idt_loss(self.gen_A, real_A, self.lamb_A)
         idt_loss_B = self._get_idt_loss(self.gen_B, real_B, self.lamb_B)
-<<<<<<< HEAD
 
-=======
-        
->>>>>>> 390c650b5cdeba84ed398ee7a42aaf6db89be465
         # energy loss
         ene_A = self.lamb_E * self.energy_loss(fake_A, real_B)
         ene_B = self.lamb_E * self.energy_loss(fake_B, real_A)
@@ -240,11 +217,7 @@ class CycleGAN(object):
                      (cyc_r_loss_B + cyc_i_loss_B) * 0.5 + \
                      idt_loss_A + idt_loss_B + \
                      ene_A + ene_B
-<<<<<<< HEAD
-        # take the optimization step
-=======
-        # take the optimization step    
->>>>>>> 390c650b5cdeba84ed398ee7a42aaf6db89be465
+
         self.optim_G.zero_grad()
         G_loss.backward()
         self.optim_G.step()
@@ -276,11 +249,7 @@ class CycleGAN(object):
     def _backward_D(self, dis, real, fake):
         pred_real = dis(real)
         D_loss_real = self.GAN_loss(pred_real, True)
-<<<<<<< HEAD
         pred_fake = dis(fake.detach()) # stop gradient from flowing back to G
-=======
-        pred_fake = dis(fake.detach()) # stop gradient from flowing back to G 
->>>>>>> 390c650b5cdeba84ed398ee7a42aaf6db89be465
         D_loss_fake = self.GAN_loss(pred_fake, False)
         D_loss = (D_loss_real + D_loss_fake) * 0.5
         D_loss.backward()
@@ -374,11 +343,7 @@ class CycleGAN(object):
                      (ene_A + ene_B) * 0.5
             G_loss.backward()
             if step: self.optim_G.step()
-<<<<<<< HEAD
 
-=======
-            
->>>>>>> 390c650b5cdeba84ed398ee7a42aaf6db89be465
             if i == 0:
                 # the data is sampled from dataset when i==0.
                 # therefore, set self.fake here, and it will be put
@@ -397,21 +362,13 @@ class CycleGAN(object):
             ene_As.append(ene_A.data[0])
             ene_Bs.append(ene_B.data[0])
 
-<<<<<<< HEAD
             if (n_G > 1) and (self.rplA.n > n_G) and (self.rplB.n > n_G):
-=======
-            if (n_G > 1) and (self.rplA.n > n_G) and (self.rplB.n > n_G): 
->>>>>>> 390c650b5cdeba84ed398ee7a42aaf6db89be465
                 # sample new data
                 real_A = Variable(self.rplA.get_samples(self.batch_size))
                 real_B = Variable(self.rplB.get_samples(self.batch_size))
             else:
                 break
-<<<<<<< HEAD
 
-=======
-        
->>>>>>> 390c650b5cdeba84ed398ee7a42aaf6db89be465
         self.G_loss_A = np.mean(G_loss_As)
         self.G_loss_B = np.mean(G_loss_Bs)
         self.cyc_r_loss_A = np.mean(cyc_r_loss_As)
@@ -510,66 +467,6 @@ class NLayerDiscriminator(nn.Module):
         else:
             r = self.model(input)
         return r
-<<<<<<< HEAD
-=======
-
-class AxisCompressGenerator(nn.Module):
-    def __init__(self, input_nc, output_nc, num_downs, ngf=32,
-                  norm_layer=nn.BatchNorm2d, gpu_ids=[], gen_mask=False):
-        self.gpu_ids = gpu_ids
-        self.gen_mask = gen_mask
-        super(AxisCompressGenerator, self).__init__()
-
-        if self.gen_mask:
-            print("build with difference.")
-
-        # (256, 32, 32)
-        unet_block = UNetBlock(ngf * 8, ngf * 8, input_nc=None,
-                    submodule=None, norm_layer=norm_layer,
-                    k_size=(1, 2), stride=(1, 1), padding=(0, 1), pos="innermost")
-
-        # (256, 32, 64)
-        unet_block = UNetBlock(ngf * 8, ngf * 8, input_nc=None,
-                    submodule=unet_block, norm_layer=norm_layer,
-                    k_size=(1, 4), stride=(1, 2), padding=(0, 1))
-
-        # (256, 32, 128)
-        unet_block = UNetBlock(ngf * 8, ngf * 8, input_nc=None,
-                    submodule=unet_block, norm_layer=norm_layer,
-                    k_size=(1, 16), stride=(1, 2), padding=(0, 7))
-
-        # (128, 32, 256)
-        unet_block = UNetBlock(ngf * 4, ngf * 8, input_nc=None,
-                    submodule=unet_block, norm_layer=norm_layer,
-                    k_size=(2, 1), stride=(2, 1), padding=(0, 0))
-
-        # (128, 64, 256)
-        unet_block = UNetBlock(ngf * 2, ngf * 4, input_nc=None,
-                    submodule=unet_block, norm_layer=norm_layer,
-                    k_size=(4, 1), stride=(2, 1), padding=(1, 0))
-
-        # (128, 128, 128)
-        unet_block = UNetBlock(ngf * 1, ngf * 2, input_nc=None,
-                    submodule=unet_block, norm_layer=norm_layer,
-                    k_size=(16, 1), stride=(2, 1), padding=(7, 0))
-
-        # (64, 256, 128)
-        unet_block = UNetBlock(output_nc, ngf, input_nc=input_nc,
-                    submodule=unet_block, norm_layer=norm_layer,
-                    k_size=(16, 4), stride=(4, 1), padding=(7, 1), pos="outermost", transpose=(30, 0))
-
-        self.model = unet_block
-
-    def forward(self, input):
-        if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
-            f = nn.parallel.data_parallel(self.model, input, self.gpu_ids)
-        else:
-            f = self.model(input)
-        #if self.gen_mask:
-        #    f = f + input
-        return f
-
->>>>>>> 390c650b5cdeba84ed398ee7a42aaf6db89be465
 
 class UNetGenerator(nn.Module):
     def __init__(self, input_nc, output_nc, num_downs, ngf=32,
@@ -592,7 +489,6 @@ class UNetGenerator(nn.Module):
         else:
             return self.model(input)
 
-<<<<<<< HEAD
 class UNetModel(nn.Module):
     def __init__(self, input_nc, output_nc, norm_layer=nn.BatchNorm2d, gpu_ids=[]):
         super(UNetModel, self).__init__()
@@ -616,8 +512,6 @@ class UNetModel(nn.Module):
         else:
             return self.model(input)
 
-=======
->>>>>>> 390c650b5cdeba84ed398ee7a42aaf6db89be465
 
 class AEModel(nn.Module):
     def __init__(self, input_nc, output_nc, n_f=3, n_t=2, batch_size=1, hidden=256, gpu_ids=[], norm_layer=nn.BatchNorm2d, trp=False):
@@ -632,7 +526,6 @@ class AEModel(nn.Module):
 
         encoder = [
             # compress freq
-<<<<<<< HEAD
             # View(batch_size, input_nc, 128),
             nn.Conv1d(input_nc, input_nc, kernel_size=32, stride=1, padding=8), # 1024, 112
             norm_layer(input_nc),
@@ -667,42 +560,6 @@ class AEModel(nn.Module):
             norm_layer(input_nc),
             nn.ReLU(True),
             #View(batch_size, input_nc, 128) if not trp else View(batch_size, 128, -1),
-=======
-            View(batch_size, input_nc, 128),
-            nn.Conv1d(input_nc, input_nc // 2, kernel_size=16, stride=2, padding=7), # 1024, 64
-            norm_layer(input_nc // 2),
-            nn.LeakyReLU(0.2, True),
-            nn.Conv1d(input_nc // 2, input_nc // 2, kernel_size=8, stride=2, padding=3), # 512, 32
-            norm_layer(input_nc // 2),
-            nn.LeakyReLU(0.2, True),
-            nn.Conv1d(input_nc // 2, input_nc // 4, kernel_size=4, stride=2, padding=1), # 256, 16
-            norm_layer(input_nc // 4),
-            nn.LeakyReLU(0.2, True),
-            nn.Conv1d(input_nc // 4, input_nc // 4, kernel_size=2, stride=2, padding=0), # 128, 8
-            norm_layer(input_nc // 4),
-            nn.LeakyReLU(0.2, True),
-            View(batch_size, -1),
-            nn.Linear(input_nc // 4 * 8, 256) if not trp else nn.Linear(input_nc // 4 * 64, 256)
-        ]
-
-        decoder = [
-            nn.Linear(256, input_nc // 4  * 8) if not trp else nn.Linear(256, input_nc // 4 * 64),
-            View(batch_size, input_nc // 4, 8) if not trp else View(batch_size, input_nc // 4, 64),
-            # decode time
-            nn.ConvTranspose1d(input_nc // 4, input_nc // 4, kernel_size=2, stride=2, padding=0), # 256, 16
-            norm_layer(input_nc // 4),
-            nn.ReLU(True),
-            nn.ConvTranspose1d(input_nc // 4, input_nc // 2, kernel_size=4, stride=2, padding=1), # 512, 32
-            norm_layer(input_nc // 2),
-            nn.ReLU(True),
-            nn.ConvTranspose1d(input_nc // 2, input_nc // 2, kernel_size=8, stride=2, padding=3), # 1024, 64
-            norm_layer(input_nc // 2),
-            nn.ReLU(True),
-            nn.ConvTranspose1d(input_nc // 2, input_nc, kernel_size=16, stride=2, padding=7), 
-            norm_layer(input_nc),
-            nn.Tanh(),
-            View(batch_size, input_nc, 128) if not trp else View(batch_size, 128, -1),
->>>>>>> 390c650b5cdeba84ed398ee7a42aaf6db89be465
         ]
         if not trp:
             seq = encoder + decoder
@@ -710,11 +567,7 @@ class AEModel(nn.Module):
             print("TRP!")
             seq = [Transpose(1,2)] + encoder + decoder + [Transpose(2, 1)]
         self.model = nn.Sequential(*seq)
-<<<<<<< HEAD
 
-=======
-            
->>>>>>> 390c650b5cdeba84ed398ee7a42aaf6db89be465
     def forward(self, input):
         if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
             return nn.parallel.data_parallel(self.model, input, self.gpu_ids)
@@ -723,15 +576,9 @@ class AEModel(nn.Module):
 
 
 class UNetBlock(nn.Module):
-<<<<<<< HEAD
     def __init__(self, outer_nc, inner_nc,
                 k_size, stride, padding, input_nc=None, cat_nc=None, submodule=None, pos=None,
                 norm_layer=nn.BatchNorm2d,
-=======
-    def __init__(self, outer_nc, inner_nc, input_nc=None,
-                k_size=(4,4), stride=(2,2), padding=(1,1),
-                submodule=None, pos=None, norm_layer=nn.BatchNorm2d,
->>>>>>> 390c650b5cdeba84ed398ee7a42aaf6db89be465
                 transpose=None):
         super(UNetBlock, self).__init__()
         self.pos = pos
@@ -745,11 +592,8 @@ class UNetBlock(nn.Module):
             input_nc = outer_nc
         if transpose == None:
             transpose = padding
-<<<<<<< HEAD
         if cat_nc == None:
             cat_nc = inner_nc * 2
-=======
->>>>>>> 390c650b5cdeba84ed398ee7a42aaf6db89be465
 
         downconv = nn.Conv1d(input_nc, inner_nc, kernel_size=k_size,
                              stride=stride, padding=padding, bias=use_bias)
@@ -761,32 +605,20 @@ class UNetBlock(nn.Module):
         if pos == "outermost":
             # inner_nc * 2: it takes as input cat([x, submodule(x)])
             self.outermost = True
-<<<<<<< HEAD
             upconv = nn.ConvTranspose1d(cat_nc, outer_nc, kernel_size=k_size,
-=======
-            upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc, kernel_size=k_size,
->>>>>>> 390c650b5cdeba84ed398ee7a42aaf6db89be465
                                         stride=stride, padding=transpose, bias=use_bias)
             down = [downconv]
             up = [uprelu, upconv, upnorm]
             model = down + [submodule] + up
         elif pos == "innermost":
-<<<<<<< HEAD
             upconv = nn.ConvTranspose1d(inner_nc, outer_nc, kernel_size=k_size+1,
-=======
-            upconv = nn.ConvTranspose2d(inner_nc, outer_nc, kernel_size=k_size,
->>>>>>> 390c650b5cdeba84ed398ee7a42aaf6db89be465
                                         stride=stride, padding=transpose, bias=use_bias)
             down = [downrelu, downconv]
             up = [uprelu, upconv, upnorm]
             model = down + up
         else:
             # inner_nc * 2: it takes as input cat([x, submodule(x)])
-<<<<<<< HEAD
             upconv = nn.ConvTranspose1d(cat_nc, outer_nc, kernel_size=k_size,
-=======
-            upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc, kernel_size=k_size,
->>>>>>> 390c650b5cdeba84ed398ee7a42aaf6db89be465
                                         stride=stride, padding=transpose, bias=use_bias)
             down = [downrelu, downconv, downnorm]
             up = [uprelu, upconv, upnorm]
@@ -899,11 +731,11 @@ class XModel(nn.Module):
         decoder = [
             nn.Linear(256, 2048),
             View(batch_size, 2, 64, 16),
-            YModel(input_nc // 16, input_nc // 4, k=8, s=2, p=3, kb=(7, 3), sb=(1, 1), pb=(3, 1), 
+            YModel(input_nc // 16, input_nc // 4, k=8, s=2, p=3, kb=(7, 3), sb=(1, 1), pb=(3, 1),
                        batch_size=batch_size, up_sampling=True), # 2, 256, 32
-            YModel(input_nc // 4, input_nc // 2, k=16, s=2, p=7, kb=(15, 7), sb=(1, 1), pb=(7, 3), 
+            YModel(input_nc // 4, input_nc // 2, k=16, s=2, p=7, kb=(15, 7), sb=(1, 1), pb=(7, 3),
                        batch_size=batch_size, up_sampling=True), # 2, 256, 32
-            YModel(input_nc // 2, input_nc, k=16, s=2, p=7, kb=(31, 15), sb=(1, 1), pb=(15, 7), 
+            YModel(input_nc // 2, input_nc, k=16, s=2, p=7, kb=(31, 15), sb=(1, 1), pb=(15, 7),
                        batch_size=batch_size, up_sampling=True), # 2, 256, 32
         ]
 
@@ -937,9 +769,9 @@ class YModel(nn.Module):
 
         self.real_net = nn.Sequential(*[cnn_real, norm_1r, relu_1])
         self.imag_net = nn.Sequential(*[cnn_imag, norm_1i, relu_1])
-       
-        #cnn_comb = cnn(output_nc * 2, output_nc * 2, kernel_size=kb, stride=sb, padding=pb) 
-        cnn_comb = cnn2d(2, 2, kernel_size=kb, stride=sb, padding=pb) 
+
+        #cnn_comb = cnn(output_nc * 2, output_nc * 2, kernel_size=kb, stride=sb, padding=pb)
+        cnn_comb = cnn2d(2, 2, kernel_size=kb, stride=sb, padding=pb)
         norm_comb = norm_layer(2)
         relu_2 = relu(*relu_args)
         self.comb_net = nn.Sequential(*[cnn_comb, norm_comb, relu_2])

@@ -68,7 +68,7 @@ def get_real_and_imag(data, norm):
 if __name__ == "__main__":
     import time
     from logger import Logger
-    from utils import generate_spec_img, generate_audio
+    from utils import generate_spec_img, generate_audio, griffin_lim
     from cycleGAN import AEModel, UNetModel
     from collections import OrderedDict
 
@@ -135,6 +135,7 @@ if __name__ == "__main__":
                 val_d = val_loader.__iter__().__next__()[0]
                 mses = []
                 nop_mses = []
+                lim_mses = []
                 for c, vd in enumerate(val_d):
                     vd = vd.unsqueeze(0)
                     pred = model.forward(Variable(vd[:, 0], volatile=True).cuda(1))
@@ -167,10 +168,13 @@ if __name__ == "__main__":
                     hyb = generate_audio(hybrid, sr=sr, hop_length=512, is_stft=True)
                     #bhy = generate_audio(bridhy, sr=8000, hop_length=512, is_stft=True)
                     nop = generate_audio(no_phase, sr=sr, hop_length=512, is_stft=True)
-                    mse = (orig - hyb)**2
-                    nmse = (orig - nop)**2
+                    lim, _, _ = griffin_lim(np.exp(_orig[0]) - 1, n_fft=2048, hop_length=512, n_iter=250)
+                    mse = np.sqrt((orig - hyb)**2)
+                    nmse = np.sqrt((orig - nop)**2)
+                    lmse = np.sqrt((orig - lim)**2)
                     mses.extend(mse)
                     nop_mses.extend(nmse)
+                    lim_mses.extend(lmse)
 
                     report_a = OrderedDict([
                         ("wav_Origin_{}_{}".format(cnt, c), orig),
@@ -178,13 +182,14 @@ if __name__ == "__main__":
                         ("wav_Hyb_{}_{}".format(cnt, c), hyb),
                         #("wav_Bhy_{}".format(cnt), bhy),
                         ("wav_Nop_{}_{}".format(cnt, c), nop),
+                        ("wav_GLim_{}_{}".format(cnt, c), lim),
                     ])
 
                     logger.log(cnt, report_i, log_type="image")
                     logger.log(cnt, report_a, log_type="audio", sr=sr)
                     logger.write()
                     logger.flush()
-                logger.log(cnt, OrderedDict([("MSE", np.mean(mses)), ("NOPMSE", np.mean(nop_mses))]))
+                logger.log(cnt, OrderedDict([("MSE", np.mean(mses)), ("NOPMSE", np.mean(nop_mses)), ("LMSE", np.mean(lim_mses))]))
                 logger.write()
                 logger.flush()
         j += 1
