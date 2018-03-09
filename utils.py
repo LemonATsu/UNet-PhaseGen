@@ -52,6 +52,7 @@ class View(nn.Module):
     def forward(self, input):
         return input.view(*self.shape)
 
+
 class Flatten(nn.Module):
     def __init__(self):
         super(Flatten, self).__init__()

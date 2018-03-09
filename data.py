@@ -51,7 +51,6 @@ def get_spec_and_angle(data, use_exp=True):
 
     return np.concatenate([spec[:, np.newaxis, ...], angle[:, np.newaxis, ...]], axis=1)
 
-
 def get_real_and_imag(data, norm):
     if data.dtype != np.complex64:
         return data
@@ -91,7 +90,11 @@ if __name__ == "__main__":
             ["dataset/Pop_audio_val.npy"],
             [0, 1], batch_size=3, precon=True)
 
-    lr = 1e-3
+    lr = 0.0001
+    """
+    optim_r = torch.optim.Adam(model_r.parameters(), lr=lr)
+    optim_i = torch.optim.Adam(model_i.parameters(), lr=lr)
+    """
     optim = torch.optim.Adam(model.parameters(), lr=lr)
     #optim_r = torch.optim.Adam(model_r.parameters(), lr=lr)
 
