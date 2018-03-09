@@ -1,11 +1,15 @@
+import matplotlib
+matplotlib.use("Agg")
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
 import librosa
+import librosa.display
+import matplotlib.pyplot as plt
 
-def generate_audio(matrix, sr, hop_length):
-    stft = matrix[0, ...] + matrix[1, ...] * 1j
+def generate_audio(matrix, sr, hop_length, is_stft=False):
+    stft = matrix[0, ...] + matrix[1, ...] * 1j if not is_stft else matrix
     # concatenate zero-filled dc component
     dc = np.zeros((1, stft.shape[1]), dtype=np.complex64)
     stft = np.concatenate((dc, stft), axis=0)
@@ -14,12 +18,55 @@ def generate_audio(matrix, sr, hop_length):
     audio = librosa.util.normalize(audio, norm=np.inf, axis=None)
     return audio
 
+def generate_spec_img(spec, is_stft=False, is_amp=False):
+    if not is_amp:
+        stft = spec[0, ...] + spec[1, ...] * 1j if not is_stft else spec
+        D = librosa.amplitude_to_db(stft, ref=np.max)
+    else:
+        D = spec
+
+    fig = plt.figure(figsize=(3, 2))
+    librosa.display.specshow(D, y_axis="linear")
+    #plt.colorbar(format="%+2.0f dB")
+    plt.colorbar()
+    fig.canvas.draw()
+    img = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+    img = img.reshape(fig.canvas.get_width_height()[::-1] + (3, ))
+    plt.close()
+    return img
+
+def generate_waveplot(audio, sr):
+    fig = plt.figure(figsize=(3, 2))
+    librosa.display.waveplot(audio, sr=sr)
+    fig.canvas.draw()
+    img = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+    img = img.reshape(fig.canvas.get_width_height()[::-1] + (3, ))
+    plt.close()
+    return img
+
 class View(nn.Module):
     def __init__(self, *shape):
         super(View, self).__init__()
         self.shape = shape
+
     def forward(self, input):
         return input.view(*self.shape)
+
+class Flatten(nn.Module):
+    def __init__(self):
+        super(Flatten, self).__init__()
+
+    def forward(self, input):
+        return input.view(input.size(0), -1)
+
+class Transpose(nn.Module):
+    def __init__(self, dim0, dim1):
+        super(Transpose, self).__init__()
+        self.dim0 = dim0
+        self.dim1 = dim1
+    def forward(self, input):
+        t = torch.transpose(input, self.dim0, self.dim1)
+        return t.contiguous()
 
 class EnergyLoss(nn.Module):
     def __init__(self, tensor=torch.FloatTensor):
@@ -34,7 +81,6 @@ class EnergyLoss(nn.Module):
 
     def _calc_amp(self, a):
         return torch.sqrt(a[:, 0, ...]**2 + a[:, 1, ...]**2 + 1e-10)
-
 
 
 class GANLoss(nn.Module):
