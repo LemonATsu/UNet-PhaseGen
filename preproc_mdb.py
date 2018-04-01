@@ -201,7 +201,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="select the genre(s) for extracting feature")
     parser.add_argument("--n_fft", default=2048, type=int, help="n_fft")
     parser.add_argument("--hop_length", default=512, type=int, help="hop_length")
-<<<<<<< HEAD
     parser.add_argument("--chunk", default=4.064, type=float, help="size of data (in second)")
     parser.add_argument("--n_random", default=[30], nargs="+", type=int, help="number of randomly generated clip for each chunk")
     parser.add_argument("--unvoice", default=False, action="store_true", help="use unvoice version of tracks")

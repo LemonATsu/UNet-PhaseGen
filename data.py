@@ -42,7 +42,7 @@ def normalize(data):
     return data
 
 def get_spec_and_angle(data, use_exp=True):
-    fft = data[:, 0, ...] + np.abs(data[:, 1, ...] * 1j)
+    fft = data[:, 0, ...] + data[:, 1, ...] * 1j
     spec = np.abs(fft)
 
     if use_exp:
@@ -77,33 +77,35 @@ if __name__ == "__main__":
     # model_r = AEModel(1024, 1, gpu_ids=[0], batch_size=32)
     # model_i = AEModel(128, 1, gpu_ids=[0], batch_size=32, trp=True)
     # model = XModel(1024, 1, batch_size=32)
-    torch.cuda.set_device(1)
-    batch_size = 32
-    model = UNetModel(1024, 1024, gpu_ids=[1]).cuda(1)
+    gpu_id = 2
+    torch.cuda.set_device(gpu_id)
+    batch_size = 16
+    model = UNetModel(1024, 1024*2, gpu_ids=[gpu_id]).cuda(gpu_id)
     sr = 16000
     # model_r = AEModel(1024, 1, gpu_ids=[2], batch_size=batch_size).cuda(2)
     loader = get_fft_npy_loader(
             ["dataset/Pop_audio_train.npy"],
+            #["dataset/Pop_audio_val.npy"],
             #["dataset/dummy.npy"],
             [0, 1], batch_size=batch_size, precon=True)
     val_loader = get_fft_npy_loader(
             ["dataset/Pop_audio_val.npy"],
             [0, 1], batch_size=3, precon=True)
 
-    lr = 0.0001
+    lr = 0.001
     """
     optim_r = torch.optim.Adam(model_r.parameters(), lr=lr)
     optim_i = torch.optim.Adam(model_i.parameters(), lr=lr)
     """
+    #optim = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
     optim = torch.optim.Adam(model.parameters(), lr=lr)
-    #optim_r = torch.optim.Adam(model_r.parameters(), lr=lr)
 
     lossf = torch.nn.MSELoss()
-    logger = Logger("unet/")
+    logger = Logger("unet_llr/")
 
     j = 0
     cnt = 0
-    losses, losses_r = [], []
+    ang_losses, mag_losses = [], []
     while True:
         start = time.time()
         for i, d in enumerate(loader):
@@ -111,11 +113,14 @@ if __name__ == "__main__":
                 continue
             cnt +=1
             optim.zero_grad()
-            pred = model.forward(Variable(d[0][:, 0, ...]).cuda(1))
-            cos_loss = lossf(torch.cos(pred), Variable(d[0][:, 1, ...].cos()).cuda(1))
-            sin_loss = lossf(torch.sin(pred), Variable(d[0][:, 1, ...].sin()).cuda(1))
+            pred = model.forward(Variable(d[0][:, 0, ...]).cuda(gpu_id))
+            pred_p, pred_m = pred[:, :1024], pred[:, 1024:]
+            cos_loss = lossf(torch.cos(pred_p), Variable(d[0][:, 1, ...].cos()).cuda(gpu_id))
+            sin_loss = lossf(torch.sin(pred_p), Variable(d[0][:, 1, ...].sin()).cuda(gpu_id))
+            mag_loss = lossf(pred_m, Variable(d[0][:, 0, ...]).cuda(gpu_id))
+            ang_loss = cos_loss + sin_loss
 
-            loss = cos_loss + sin_loss
+            loss = ang_loss + mag_loss * 0.2
             loss.backward()
             optim.step()
 
@@ -127,20 +132,21 @@ if __name__ == "__main__":
             optim_r.step()
             """
 
-            losses.append(loss.data[0])
+            ang_losses.append(ang_loss.data[0])
+            mag_losses.append(mag_loss.data[0])
             #losses_r.append(loss_r.data[0])
 
 
-            if cnt % 500 == 0:
+            if cnt % 2000 == 0:
                 val_d = val_loader.__iter__().__next__()[0]
                 mses = []
                 nop_mses = []
                 lim_mses = []
                 for c, vd in enumerate(val_d):
                     vd = vd.unsqueeze(0)
-                    pred = model.forward(Variable(vd[:, 0], volatile=True).cuda(1))
+                    pred = model.forward(Variable(vd[:, 0], volatile=True).cuda(gpu_id))
                     _orig = vd.cpu().numpy()[0]
-                    _gen = pred.data.cpu().numpy()[0]
+                    _gen = pred.data.cpu().numpy()[0, :1024, ...]
                     #_rgen = pred_r[0].data.cpu().numpy()
 
                     orig = (np.exp(_orig[0]) - 1) * np.exp(_orig[1] * 1.j)
@@ -168,7 +174,8 @@ if __name__ == "__main__":
                     hyb = generate_audio(hybrid, sr=sr, hop_length=512, is_stft=True)
                     #bhy = generate_audio(bridhy, sr=8000, hop_length=512, is_stft=True)
                     nop = generate_audio(no_phase, sr=sr, hop_length=512, is_stft=True)
-                    lim, _, _ = griffin_lim(np.exp(_orig[0]) - 1, n_fft=2048, hop_length=512, n_iter=250)
+                    lim, _, _ = griffin_lim(no_phase, n_fft=2048, hop_length=512, n_iter=250)
+
                     mse = np.sqrt((orig - hyb)**2)
                     nmse = np.sqrt((orig - nop)**2)
                     lmse = np.sqrt((orig - lim)**2)
@@ -192,10 +199,12 @@ if __name__ == "__main__":
                 logger.log(cnt, OrderedDict([("MSE", np.mean(mses)), ("NOPMSE", np.mean(nop_mses)), ("LMSE", np.mean(lim_mses))]))
                 logger.write()
                 logger.flush()
+                if cnt % 4000 == 0:
+                    model.save("unet_llr/ckpt_{}".format(cnt))
         j += 1
 
-        print("Epoch {} done, {} elasped, loss: {}".format(j, time.time()-start, np.mean(losses)))
-        logger.log(j, OrderedDict([("Loss", np.mean(losses))]))
+        print("Epoch {} done, {} elasped, mag loss: {}, ang loss: {}".format(j, time.time()-start, np.mean(mag_losses), np.mean(ang_losses)))
+        logger.log(j, OrderedDict([("Ang Loss", np.mean(ang_losses)), ("Mag Loss", np.mean(mag_losses))]))
         logger.write()
         logger.flush()
         #print("Epoch {} done, {} elasped, loss: {}, loss_r: {}".format(j, time.time()-start, np.mean(losses), np.mean(losses_r)))

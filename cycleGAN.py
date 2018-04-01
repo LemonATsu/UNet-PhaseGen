@@ -496,9 +496,9 @@ class UNetModel(nn.Module):
 
         unet_block = UNetBlock(input_nc * 2, input_nc * 4, 4, 2, 1,
                                 pos="innermost", norm_layer=norm_layer)
-        unet_block = UNetBlock(input_nc * 2, input_nc * 2, 16, 2, 1, cat_nc=input_nc * 4,
+        unet_block = UNetBlock(input_nc * 2, input_nc * 2, 8, 2, 1, cat_nc=input_nc * 4,
                                 submodule=unet_block, norm_layer=norm_layer)
-        unet_block = UNetBlock(input_nc * 2, input_nc * 2, 16, 1, 2, cat_nc=input_nc * 4,
+        unet_block = UNetBlock(input_nc * 2, input_nc * 2, 8, 1, 2, cat_nc=input_nc * 4,
                                 submodule=unet_block, norm_layer=norm_layer)
         unet_block = UNetBlock(output_nc, input_nc * 2, 32, 2, 16, input_nc=input_nc, cat_nc=input_nc * 4,
                                 submodule=unet_block, pos="outermost", norm_layer=norm_layer)
@@ -511,6 +511,17 @@ class UNetModel(nn.Module):
             return nn.parallel.data_parallel(self.model, input, self.gpu_ids)
         else:
             return self.model(input)
+
+    def save(self, path):
+        torch.save(self.model.cpu().state_dict(), path)
+        if self.gpu_ids:
+            self.model.cuda(self.gpu_ids[0])
+
+    def load(self, path):
+        state_dict = torch.load(path)
+        self.model.load_state_dict(state_dict)
+        if self.gpu_ids:
+            self.model.cuda(self.gpu_ids[0])
 
 
 class AEModel(nn.Module):

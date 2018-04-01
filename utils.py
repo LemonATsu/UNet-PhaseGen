@@ -8,7 +8,6 @@ import librosa
 import librosa.display
 import matplotlib.pyplot as plt
 
-
 def generate_audio(matrix, sr, hop_length, is_stft=False):
     stft = matrix[0, ...] + matrix[1, ...] * 1j if not is_stft else matrix
     # concatenate zero-filled dc component
@@ -39,20 +38,24 @@ def generate_spec_img(spec, is_stft=False, is_amp=False):
 def griffin_lim(spec, n_fft, hop_length, n_iter):
     n = n_iter
 
-    audio = librosa.istft(spec, n_fft=n_fft, hop_length=hop_length)
+    audio = librosa.istft(spec, hop_length=hop_length)
     # start with random vector (extracting phase from random vector)
     recon_aud = np.random.randn(audio.shape[0])
 
     while n > 0:
         n -= 1
         recon_spec = librosa.stft(recon_aud, n_fft=n_fft, hop_length=hop_length)
+        recon_spec = np.delete(recon_spec, (0), axis=0)
         recon_phase = np.angle(recon_spec) # extract phase
 
         new_spec = spec * np.exp(1.0j * recon_phase)
         prev_aud = recon_aud # for loss computation
 
-        recon_aud = librosa.istft(new_spec, n_fft=n_fft, hop_length=hop_length)
+        recon_aud = librosa.istft(new_spec, hop_length=hop_length)
         loss = np.sqrt(np.sum((recon_aud - prev_aud)**2 / recon_aud.size))
+    librosa.util.valid_audio(recon_aud, mono=False)
+    recon_aud = librosa.util.normalize(recon_aud, norm=np.inf, axis=None)
+
     return recon_aud, new_spec, loss
 
 def generate_waveplot(audio, sr):
