@@ -8,17 +8,63 @@ import librosa
 import librosa.display
 import matplotlib.pyplot as plt
 
-def generate_audio(matrix, sr, hop_length, is_stft=False):
-    stft = matrix[0, ...] + matrix[1, ...] * 1j if not is_stft else matrix
-    # concatenate zero-filled dc component
+def generate_audio(spec, sr, hop_length, is_stft=False):
+    """
+    Generate audio from a given (1) mag_stft or (2) separated real/complex matrices
+    specified by is_stft.
+
+    Parameters
+    ----------
+    spec : ndarray
+        Takes either (1)mag_stft or (2) separated real/complex matrices
+    sr : int
+        Sampling rate for generating audio
+    hop_length : int
+        Hop length used for istft
+    is_stft : bool
+        Specify the input spec type.
+
+    Returns
+    -------
+    audio : ndarray
+        Generated and normalized audio.
+
+    """
+
+    stft = spec[0, ...] + spec[1, ...] * 1j if not is_stft else spec
+
+    # the dc component is removed during data-processing stage,
+    # concatenate zero-filled dc component back for istft
     dc = np.zeros((1, stft.shape[1]), dtype=np.complex64)
     stft = np.concatenate((dc, stft), axis=0)
     audio = librosa.istft(stft, hop_length=hop_length)
     librosa.util.valid_audio(audio, mono=False)
     audio = librosa.util.normalize(audio, norm=np.inf, axis=None)
+
     return audio
 
 def generate_spec_img(spec, is_stft=False, is_amp=False):
+    """
+    Generate spectrogram (image) from a given (1) mag_stft or (2) separated real/complex matrices
+    specified by is_stft (or is_amp).
+
+    Parameters
+    ----------
+    spec : ndarray
+        Takes either (1)mag_stft or (2) separated real/complex matrices
+    is_stft : bool
+        Specify the input spec type.
+    is_amp : bool
+        Specify whether the input spec is already a amplitude spectrogram.
+
+    Returns
+    -------
+    img : ndarray
+        Image of the given spectrogram.
+
+    """
+
+
     if not is_amp:
         stft = spec[0, ...] + spec[1, ...] * 1j if not is_stft else spec
         D = librosa.amplitude_to_db(stft, ref=np.max)
@@ -33,9 +79,36 @@ def generate_spec_img(spec, is_stft=False, is_amp=False):
     img = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
     img = img.reshape(fig.canvas.get_width_height()[::-1] + (3, ))
     plt.close()
+
     return img
 
 def griffin_lim(spec, n_fft, hop_length, n_iter):
+    """
+    Generate phase components for the given spec, and output the reconstructed
+    audio clips.
+
+    Parameters
+    ----------
+    spec : ndarray
+        stft spectrogram.
+    n_fft : int
+        n_fft for stft.
+    hop_length : int
+        Hop length for stft.
+    n_iter : int
+        The number of griffin lim iterations for phase reconstruction.
+
+    Returns
+    -------
+    recon_aud : ndarray
+        Reconstructed audio.
+    new_spec : ndarray
+        Reconstructed spectrogram.
+    loss : float
+        RMSE loss of griffin lim.
+    """
+
+
     n = n_iter
 
     audio = librosa.istft(spec, hop_length=hop_length)
@@ -53,6 +126,8 @@ def griffin_lim(spec, n_fft, hop_length, n_iter):
 
         recon_aud = librosa.istft(new_spec, hop_length=hop_length)
         loss = np.sqrt(np.sum((recon_aud - prev_aud)**2 / recon_aud.size))
+
+    # normalize the generated audio
     librosa.util.valid_audio(recon_aud, mono=False)
     recon_aud = librosa.util.normalize(recon_aud, norm=np.inf, axis=None)
 

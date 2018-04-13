@@ -28,11 +28,6 @@ def get_fft_npy_loader(paths, labels=None, batch_size=1, norm=True, precon=False
     return loader
 
 def _norm(data):
-    """
-    if (data.max() - data.min()) == 0:
-        return data
-    return 2 * (data - data.min()) / (data.max() - data.min()) - 1
-    """
     return (data - data.mean()) / data.std()
 
 def normalize(data):
@@ -72,11 +67,6 @@ if __name__ == "__main__":
     from cycleGAN import AEModel, UNetModel
     from collections import OrderedDict
 
-    # model = NLayerDiscriminator(2, ndf=32, n_layers=4, gpu_ids=[3])
-    # model = AxisCompressGenerator(2, 2, 8, gpu_ids=[0])
-    # model_r = AEModel(1024, 1, gpu_ids=[0], batch_size=32)
-    # model_i = AEModel(128, 1, gpu_ids=[0], batch_size=32, trp=True)
-    # model = XModel(1024, 1, batch_size=32)
     gpu_id = 2
     torch.cuda.set_device(gpu_id)
     batch_size = 16
